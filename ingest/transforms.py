@@ -23,3 +23,13 @@ def parse_zip_caret(zip_bytes: bytes):
             elif {"test_type","test_id","student_group_id","total_students_tested_with_scores","mean_scale_score"}.issubset(cols):
                 out["tests"] = df
     return out
+
+def parse_student_groups(raw: bytes) -> pl.DataFrame:
+    """Parse the StudentGroups.txt file"""
+    df = read_caret_csv(raw)
+    return _norm(df)
+
+def parse_tests(raw: bytes) -> pl.DataFrame:
+    """Parse the Tests.txt file"""
+    df = read_caret_csv(raw)
+    return _norm(df)

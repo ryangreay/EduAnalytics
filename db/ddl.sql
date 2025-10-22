@@ -24,8 +24,12 @@ CREATE TABLE IF NOT EXISTS analytics.fact_scores (
   cnt_nearly_met INT,
   pct_not_met NUMERIC,
   cnt_not_met INT,
+  county_name TEXT,
+  county_code TEXT,
   district_name TEXT,                 -- keep raw names for now
-  school_name TEXT                    -- keep raw names for now
+  district_code TEXT,
+  school_name TEXT,                    -- keep raw names for now
+  school_code TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_scores_keys

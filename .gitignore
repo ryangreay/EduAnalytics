@@ -2,3 +2,9 @@
 instructions.txt
 pinecone_api_key.txt
 .cursorignore
+/sample_data
+inspect_pinecone.py
+test_agent.py
+upgrade_summary.md
+SETUP_GUIDE.md
+README.md

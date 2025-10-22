@@ -1,12 +1,13 @@
-import os, re, datetime, json
+import os, re, datetime, json, zipfile, io
 import requests, polars as pl, numpy as np
 from prefect import flow, task, get_run_logger
 from sqlalchemy import create_engine, text
 from dotenv import load_dotenv
-import faiss
+from pinecone import Pinecone, ServerlessSpec
 from langchain_openai import OpenAIEmbeddings
-from .config import DATA_DIR, CAASPP_LIST
-from .transforms import parse_zip_caret
+from langchain_pinecone import PineconeVectorStore
+from .config import DATA_DIR, CAASPP_LIST, STUDENT_GROUPS_URL, TESTS_URL
+from .transforms import parse_zip_caret, parse_student_groups, parse_tests
 
 load_dotenv()
 PG_URL = (
@@ -94,10 +95,38 @@ def load_tests(engine, tests: pl.DataFrame, year_key: int):
         """))
 
 @task
-def build_faiss_from_entities(pairs: list[tuple[int, bytes]], index_dir: str = "./data/faiss"):
-    os.makedirs(index_dir, exist_ok=True)
-    emb = OpenAIEmbeddings(model="text-embedding-3-large")
-    texts, metas = [], []
+def build_pinecone_index(pairs: list[tuple[int, bytes]], student_groups_df: pl.DataFrame, tests_df: pl.DataFrame):
+    """Build Pinecone index with entities, student groups, tests, grades"""
+    logger = get_run_logger()
+    
+    # Read Pinecone API key
+    pinecone_key = os.getenv("PINECONE_API_KEY")
+    if not pinecone_key:
+        with open("pinecone_api_key.txt", "r") as f:
+            pinecone_key = f.read().strip()
+    
+    # Initialize Pinecone
+    pc = Pinecone(api_key=pinecone_key)
+    index_name = os.getenv("PINECONE_INDEX_NAME", "eduanalytics-entities")
+    
+    # Create index if it doesn't exist
+    existing_indexes = [idx.name for idx in pc.list_indexes()]
+    if index_name not in existing_indexes:
+        logger.info(f"Creating Pinecone index: {index_name}")
+        pc.create_index(
+            name=index_name,
+            dimension=3072,  # text-embedding-3-large dimension
+            metric="cosine",
+            spec=ServerlessSpec(cloud="aws", region="us-east-1")
+        )
+    
+    # Initialize embeddings and vector store
+    embeddings = OpenAIEmbeddings(model="text-embedding-3-large")
+    vector_store = PineconeVectorStore(index_name=index_name, embedding=embeddings)
+    
+    texts, metadatas = [], []
+    
+    # 1. Add entities (counties, districts, schools)
     for year_key, zip_bytes in pairs:
         parts = parse_zip_caret(zip_bytes)
         ents = parts["entities"]
@@ -105,26 +134,83 @@ def build_faiss_from_entities(pairs: list[tuple[int, bytes]], index_dir: str = "
             continue
         keep = [c for c in ["county_code","district_code","school_code","type_id","test_year","county_name","district_name","school_name","zip_code"] if c in ents.columns]
         ents = ents.select(keep).with_columns(pl.lit(year_key).alias("year_key"))
+        
         for r in ents.iter_rows(named=True):
-            label = " | ".join(
-                [str(r.get("county_name") or ""), str(r.get("district_name") or ""), str(r.get("school_name") or "")]
-            ).strip(" |")
+            county_name = str(r.get("county_name") or "").strip()
+            district_name = str(r.get("district_name") or "").strip()
+            school_name = str(r.get("school_name") or "").strip()
+            
+            label = " | ".join([county_name, district_name, school_name]).strip(" |")
             code = f"{r.get('county_code',''):0>2}{r.get('district_code',''):0>5}{r.get('school_code',''):0>7}"
+            
             text = f"{label} | CDS:{code} | type:{r.get('type_id','')}"
             texts.append(text)
-            metas.append(r)
-    if not texts:
-        return
-    vecs = emb.embed_documents(texts)
-    dim = len(vecs[0])
-    idx = faiss.IndexFlatIP(dim)
-    mat = np.array(vecs, dtype="float32")
-    faiss.normalize_L2(mat)
-    idx.add(mat)
-    faiss.write_index(idx, os.path.join(index_dir,"entities.faiss"))
-    pl.DataFrame(metas).write_parquet(os.path.join(index_dir,"entities.parquet"))
-    with open(os.path.join(index_dir,"meta.json"),"w") as f:
-        json.dump({"count": len(texts)}, f)
+            metadatas.append({
+                "type": "entity",
+                "county_name": county_name,
+                "district_name": district_name,
+                "school_name": school_name,
+                "county_code": str(r.get("county_code", "")),
+                "district_code": str(r.get("district_code", "")),
+                "school_code": str(r.get("school_code", "")),
+                "cds_code": code,
+                "year_key": year_key
+            })
+    
+    # 2. Add student groups/subgroups
+    if student_groups_df is not None and student_groups_df.height > 0:
+        for r in student_groups_df.iter_rows(named=True):
+            demo_name = str(r.get("demographic_name", ""))
+            demo_id = str(r.get("demographic_id_num", ""))
+            student_group = str(r.get("student_group", ""))
+            
+            text = f"{demo_name} (Subgroup ID: {demo_id}, Category: {student_group})"
+            texts.append(text)
+            metadatas.append({
+                "type": "subgroup",
+                "demographic_name": demo_name,
+                "demographic_id": demo_id,
+                "student_group": student_group
+            })
+    
+    # 3. Add tests
+    if tests_df is not None and tests_df.height > 0:
+        for r in tests_df.iter_rows(named=True):
+            test_name = str(r.get("test_name", ""))
+            test_id = str(r.get("test_id_num", ""))
+            
+            text = f"{test_name} (Test ID: {test_id})"
+            texts.append(text)
+            metadatas.append({
+                "type": "test",
+                "test_name": test_name,
+                "test_id": test_id
+            })
+    
+    # 4. Add grades
+    grades = ["3", "4", "5", "6", "7", "8", "11", "Grade 3", "Grade 4", "Grade 5", "Grade 6", "Grade 7", "Grade 8", "Grade 11"]
+    for grade in grades:
+        texts.append(f"Grade {grade}")
+        metadatas.append({
+            "type": "grade",
+            "grade": grade
+        })
+    
+    # Upload to Pinecone in batches
+    if texts:
+        logger.info(f"Uploading {len(texts)} entities to Pinecone index: {index_name}")
+        # Clear existing data first
+        pc.Index(index_name).delete(delete_all=True)
+        
+        # Add in batches
+        batch_size = 100
+        for i in range(0, len(texts), batch_size):
+            batch_texts = texts[i:i+batch_size]
+            batch_metas = metadatas[i:i+batch_size]
+            vector_store.add_texts(batch_texts, metadatas=batch_metas)
+            logger.info(f"Uploaded batch {i//batch_size + 1}/{(len(texts)-1)//batch_size + 1}")
+        
+        logger.info(f"Successfully uploaded {len(texts)} entities to Pinecone")
 
 @flow(name="caaspp_last_3_years")
 def caaspp_last_3_years():
@@ -135,6 +221,35 @@ def caaspp_last_3_years():
     latest_year = now.year - 1  # AY 2024–25 → year_key 2024
     last_years = int(os.getenv("LAST_YEARS","3"))
     ensure_years(engine, latest_year, last_years)
+
+    # Fetch StudentGroups and Tests reference files
+    logger.info("Fetching StudentGroups reference file...")
+    student_groups_bytes = http_get(STUDENT_GROUPS_URL)
+    student_groups_df = None
+    try:
+        with zipfile.ZipFile(io.BytesIO(student_groups_bytes)) as z:
+            for name in z.namelist():
+                if name.lower().endswith('.txt') or name.lower().endswith('.csv'):
+                    raw = z.read(name)
+                    student_groups_df = parse_student_groups(raw)
+                    logger.info(f"Loaded StudentGroups: {student_groups_df.height} rows")
+                    break
+    except Exception as e:
+        logger.warning(f"Could not parse StudentGroups file: {e}")
+    
+    logger.info("Fetching Tests reference file...")
+    tests_bytes = http_get(TESTS_URL)
+    tests_df = None
+    try:
+        with zipfile.ZipFile(io.BytesIO(tests_bytes)) as z:
+            for name in z.namelist():
+                if name.lower().endswith('.txt') or name.lower().endswith('.csv'):
+                    raw = z.read(name)
+                    tests_df = parse_tests(raw)
+                    logger.info(f"Loaded Tests: {tests_df.height} rows")
+                    break
+    except Exception as e:
+        logger.warning(f"Could not parse Tests file: {e}")
 
     zip_blobs_for_entities = []
 
@@ -148,7 +263,8 @@ def caaspp_last_3_years():
             load_tests.submit(engine, parts["tests"], y)
             zip_blobs_for_entities.append((y, zb.result()))
 
-    build_faiss_from_entities.submit(zip_blobs_for_entities)
+    # Build Pinecone index with all entity data
+    build_pinecone_index.submit(zip_blobs_for_entities, student_groups_df, tests_df)
 
 if __name__ == "__main__":
     caaspp_last_3_years()

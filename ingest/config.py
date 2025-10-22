@@ -6,3 +6,7 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 # Smarter Balanced research list page for a given year
 CAASPP_LIST = "https://caaspp-elpac.ets.org/caaspp/ResearchFileListSB.aspx?lstCounty=00&lstDistrict=00000&lstTestType=B&lstTestYear={year}&ps=true"
+
+# Entity reference files (constant URLs)
+STUDENT_GROUPS_URL = "https://caaspp-elpac.ets.org/caaspp/researchfiles/Subgroups.zip"
+TESTS_URL = "https://caaspp-elpac.ets.org/caaspp/researchfiles/Tests.zip"

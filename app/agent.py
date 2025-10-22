@@ -1,66 +1,82 @@
-from typing import TypedDict, List, Dict, Any
+from typing import Annotated, Sequence
+from typing_extensions import TypedDict
+from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
+from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph, END
+from langgraph.graph.message import add_messages
+from langgraph.prebuilt import create_react_agent
 
-class S(TypedDict):
-    history: List[Dict[str,str]]  # [{"role":"user"/"assistant","content": "..."}]
-    question: str
-    entities: List[Dict[str,Any]]
-    sql: str
-    rows: List[Dict[str,Any]]
-    chart: Dict[str,Any]
-    narration: str
+from .prompts import REACT_SYSTEM_PROMPT
+from .tools_sql import SQLToolkit
+from .tools_entity import EntityResolver
 
-def node_resolve(state: S, resolver) -> S:
-    q = state["question"]
-    hits = resolver.search(q, k=5)
-    state["entities"] = hits
-    return state
 
-def node_sql(state: S, sqltool) -> S:
-    # Compose a short history string
-    hist = []
-    for m in state["history"][-8:]:
-        role = m["role"]
-        hist.append(f"{role.upper()}: {m['content']}")
-    history_text = "\n".join(hist)
+class AgentState(TypedDict):
+    """State for the ReAct agent"""
+    messages: Annotated[Sequence[BaseMessage], add_messages]
+    sql_error_count: int  # Track consecutive SQL errors
 
-    # Add soft hint from best entity match
-    q = state["question"]
-    if state["entities"]:
-        e = state["entities"][0]
-        label = " | ".join([str(e.get("county_name","")), str(e.get("district_name","")), str(e.get("school_name",""))]).strip(" |")
-        q = f"{q}\n(Hint entity: {label})"
 
-    sql = sqltool.generate_sql(history_text, q)
-    state["sql"] = sql
-    return state
+def create_sql_agent(pg_url: str, whitelist_path: str):
+    """Create a ReAct agent for SQL question answering with entity lookup"""
+    
+    # Initialize components
+    sql_toolkit = SQLToolkit(pg_url, whitelist_path)
+    entity_resolver = EntityResolver()
+    
+    # Get tools with error tracking
+    tools = sql_toolkit.get_tools_with_retry_limit(max_attempts=3)
+    
+    # Add entity resolver tool if enabled
+    if entity_resolver.enabled:
+        tools.append(entity_resolver.as_tool())
+    
+    # Create LLM
+    llm = ChatOpenAI(model="gpt-4o", temperature=0)
+    
+    # Create ReAct agent with iteration limit
+    agent = create_react_agent(
+        llm,
+        tools,
+        prompt=REACT_SYSTEM_PROMPT,
+        state_modifier="You are analyzing California education data. Stay focused on answering the user's question."
+    )
+    
+    return agent, sql_toolkit
 
-def node_run(state: S, sqltool) -> S:
-    rows, sql = sqltool.run_sql(state["sql"])
-    state["rows"] = rows
-    state["sql"] = sql
-    return state
 
-def node_chart(state: S, pick_chart_fn) -> S:
-    state["chart"] = pick_chart_fn(state["rows"], state["question"])
-    return state
-
-def node_narrate(state: S) -> S:
-    rc = len(state["rows"])
-    state["narration"] = f"Returned {rc} row(s)."
-    return state
-
-def build_graph(resolver, sqltool, pick_chart_fn):
-    g = StateGraph(S)
-    g.add_node("resolve", lambda s: node_resolve(s, resolver))
-    g.add_node("gen_sql", lambda s: node_sql(s, sqltool))
-    g.add_node("run_sql", lambda s: node_run(s, sqltool))
-    g.add_node("chart", lambda s: node_chart(s, pick_chart_fn))
-    g.add_node("narrate", node_narrate)
-    g.set_entry_point("resolve")
-    g.add_edge("resolve","gen_sql")
-    g.add_edge("gen_sql","run_sql")
-    g.add_edge("run_sql","chart")
-    g.add_edge("chart","narrate")
-    g.add_edge("narrate", END)
-    return g.compile()
+def run_agent_query(agent, question: str, history: list = None):
+    """
+    Run a query through the agent
+    
+    Args:
+        agent: The LangGraph agent
+        question: User's question
+        history: Optional list of previous messages [{"role": "user"/"assistant", "content": "..."}]
+    
+    Returns:
+        dict with 'response' (agent's final answer) and 'messages' (full message history)
+    """
+    # Convert history to messages
+    messages = []
+    if history:
+        for msg in history:
+            if msg["role"] == "user":
+                messages.append(HumanMessage(content=msg["content"]))
+            elif msg["role"] == "assistant":
+                messages.append(AIMessage(content=msg["content"]))
+    
+    # Add current question
+    messages.append(HumanMessage(content=question))
+    
+    # Run agent
+    result = agent.invoke({"messages": messages})
+    
+    # Extract final response
+    final_message = result["messages"][-1]
+    response = final_message.content if hasattr(final_message, 'content') else str(final_message)
+    
+    return {
+        "response": response,
+        "messages": result["messages"]
+    }
