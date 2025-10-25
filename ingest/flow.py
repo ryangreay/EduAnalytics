@@ -54,6 +54,21 @@ def ensure_years(engine, latest_year: int, last_years: int):
             """), {"y": y, "l": f"AY {y}-{y+1}"})
 
 @task
+def delete_scores_for_year(engine, year_key: int):
+    logger = get_run_logger()
+    with engine.begin() as con:
+        logger.info(f"Deleting existing analytics.fact_scores rows for year_key={year_key}...")
+        res = con.execute(text("""
+            DELETE FROM analytics.fact_scores WHERE year_key = :y
+        """), {"y": year_key})
+        try:
+            deleted = res.rowcount if hasattr(res, "rowcount") else None
+            if deleted is not None:
+                logger.info(f"Deleted {deleted:,} rows for year_key={year_key}")
+        except Exception:
+            pass
+
+@task
 def load_tests(engine, tests: pl.DataFrame, year_key: int):
     logger = get_run_logger()
     if tests is None or tests.height == 0:
@@ -94,39 +109,41 @@ def load_tests(engine, tests: pl.DataFrame, year_key: int):
         "school_code":"school_code",
         "district_name":"district_name",
         "school_name":"school_name",
-        "test_id":"test_id"
+        "test_id":"test_id",
+        "cds_code":"cds_code"
     }
     
     cols = [c for c in ren if c in df.columns]
     rename_map = {c: ren[c] for c in cols}
     df = df.select(cols).rename(rename_map)
     
-    # Subject heuristic: test_id 1 = ELA, 2 = Math (adjust if your files label differently)
     if "test_id" not in df.columns:
         logger.warning("test_id column not found, cannot determine subject. Skipping this data.")
         return
     
-    # Build all transformations in one go to avoid lazy evaluation issues
-    transformations = []
-    
-    # Add subject based on test_id
-    transformations.append(
-        pl.when(pl.col("test_id")==2).then(pl.lit("Math")).otherwise(pl.lit("ELA")).alias("subject")
-    )
-    
-    # Add year_key
-    transformations.append(pl.lit(year_key).alias("year_key"))
-    
-    # Format codes as zero-padded strings if they exist
+    # Add year_key immediately (no conflict)
+    df = df.with_columns(pl.lit(year_key).alias("year_key"))
+
+    # Safely pad codes by writing to temp columns, then replace originals to avoid duplicate alias errors
     if "county_code" in df.columns:
-        transformations.append(pl.col("county_code").cast(pl.Utf8).str.zfill(2).alias("county_code"))
+        df = df.with_columns(pl.col("county_code").cast(pl.Utf8).str.zfill(2).alias("county_code_p"))
+        df = df.drop(["county_code"]).rename({"county_code_p": "county_code"})
     if "district_code" in df.columns:
-        transformations.append(pl.col("district_code").cast(pl.Utf8).str.zfill(5).alias("district_code"))
+        df = df.with_columns(pl.col("district_code").cast(pl.Utf8).str.zfill(5).alias("district_code_p"))
+        df = df.drop(["district_code"]).rename({"district_code_p": "district_code"})
     if "school_code" in df.columns:
-        transformations.append(pl.col("school_code").cast(pl.Utf8).str.zfill(7).alias("school_code"))
-    
-    # Apply all transformations at once
-    df = df.with_columns(transformations).drop(["test_id"])
+        df = df.with_columns(pl.col("school_code").cast(pl.Utf8).str.zfill(7).alias("school_code_p"))
+        df = df.drop(["school_code"]).rename({"school_code_p": "school_code"})
+
+    # Populate cds_code from padded codes
+    if "county_code" in df.columns and "district_code" in df.columns and "school_code" in df.columns:
+        df = df.with_columns(
+            (
+                pl.col("county_code").cast(pl.Utf8).str.zfill(2)
+                + pl.col("district_code").cast(pl.Utf8).str.zfill(5)
+                + pl.col("school_code").cast(pl.Utf8).str.zfill(7)
+            ).alias("cds_code")
+        )
 
     # Ensure COPY column order and presence to avoid positional mismatches
     expected_cols = [
@@ -135,7 +152,7 @@ def load_tests(engine, tests: pl.DataFrame, year_key: int):
         "pct_met_and_above", "cnt_met_and_above", "pct_nearly_met", "cnt_nearly_met",
         "pct_not_met", "cnt_not_met",
         "county_code", "district_code", "school_code",
-        "district_name", "school_name", "subject", "year_key"
+        "district_name", "school_name", "test_id", "cds_code", "year_key"
     ]
 
     # Add any missing columns as nulls so counts don't receive percentages by shift
@@ -161,7 +178,7 @@ def load_tests(engine, tests: pl.DataFrame, year_key: int):
                 pct_met_and_above, cnt_met_and_above, pct_nearly_met, cnt_nearly_met,
                 pct_not_met, cnt_not_met, 
                 county_code, district_code, school_code,
-                district_name, school_name, subject, year_key
+                district_name, school_name, test_id, cds_code, year_key
             )
             FROM STDIN WITH (FORMAT CSV, NULL '\\N')
         """
@@ -233,14 +250,16 @@ def build_pinecone_index(entity_dataframes: list[tuple[int, pl.DataFrame]], stud
             continue
         
         for r in ents.iter_rows(named=True):
-            county_name = str(r.get("county_name") or "").strip()
+            county_name = str(r.get("county_name") or "").strip() + " County"
             district_name = str(r.get("district_name") or "").strip()
             school_name = str(r.get("school_name") or "").strip()
+            county_code = str(r.get("county_code") or "").strip().zfill(2)
+            district_code = str(r.get("district_code") or "").strip().zfill(5)
+            school_code = str(r.get("school_code") or "").strip().zfill(7)
+            cds_code = f"{county_code}{district_code}{school_code}"
             
             label = " | ".join([county_name, district_name, school_name]).strip(" |")
-            code = f"{r.get('county_code',''):0>2}{r.get('district_code',''):0>5}{r.get('school_code',''):0>7}"
-            
-            text = f"{label} | CDS:{code} | type:{r.get('type_id','')}"
+            text = f"{label} | CDS:{cds_code}"
             texts.append(text)
             metadatas.append({
                 "type": "entity",
@@ -250,7 +269,7 @@ def build_pinecone_index(entity_dataframes: list[tuple[int, pl.DataFrame]], stud
                 "county_code": str(r.get("county_code", "")),
                 "district_code": str(r.get("district_code", "")),
                 "school_code": str(r.get("school_code", "")),
-                "cds_code": code,
+                "cds_code": cds_code,
                 "year_key": year_key
             })
     
@@ -369,6 +388,8 @@ def caaspp_last_3_years():
 
     for y in range(latest_year - last_years + 1, latest_year + 1):
         logger.info(f"Processing year {y} (latest_year={latest_year})")
+        # Ensure we start fresh for this year: remove any previously loaded rows
+        delete_scores_for_year.submit(engine, y)
         page = http_get.submit(CAASPP_LIST.format(year=y))
         zips = caret_zip_urls.submit(page)
         zip_urls = zips.result()

@@ -1,4 +1,6 @@
 CREATE SCHEMA IF NOT EXISTS analytics;
+DROP TABLE IF EXISTS analytics.fact_scores;
+DROP TABLE IF EXISTS analytics.dim_year;
 
 CREATE TABLE IF NOT EXISTS analytics.dim_year (
   year_key INT PRIMARY KEY,           -- e.g., 2022 for AY 2022–23
@@ -8,7 +10,8 @@ CREATE TABLE IF NOT EXISTS analytics.dim_year (
 CREATE TABLE IF NOT EXISTS analytics.fact_scores (
   id BIGSERIAL PRIMARY KEY,
   year_key INT REFERENCES analytics.dim_year(year_key),
-  subject TEXT CHECK (subject IN ('Math','ELA')),
+  test_id INT,
+  --subject TEXT CHECK (subject IN ('Math','ELA')),
   subgroup TEXT,                      -- Student Group ID or resolved label later
   grade TEXT,                         -- Grade text/number as provided
   tested NUMERIC,
@@ -29,12 +32,16 @@ CREATE TABLE IF NOT EXISTS analytics.fact_scores (
   district_name TEXT,                 -- keep raw names for now
   district_code TEXT,
   school_name TEXT,                    -- keep raw names for now
-  school_code TEXT
+  school_code TEXT,
+  cds_code TEXT
 );
+-- Add index on cds_code
+CREATE INDEX IF NOT EXISTS idx_scores_cds_code
+  ON analytics.fact_scores (cds_code);
 
 -- Composite index for common query patterns (year, subject, grade, subgroup)
 CREATE INDEX IF NOT EXISTS idx_scores_keys
-  ON analytics.fact_scores (year_key, subject, grade, subgroup);
+  ON analytics.fact_scores (year_key, test_id, grade, subgroup);
 
 -- Index for school/district lookups
 CREATE INDEX IF NOT EXISTS idx_scores_location
@@ -42,15 +49,15 @@ CREATE INDEX IF NOT EXISTS idx_scores_location
 
 -- Index for district-level queries
 CREATE INDEX IF NOT EXISTS idx_scores_district
-  ON analytics.fact_scores (district_code, year_key, subject);
+  ON analytics.fact_scores (district_code, year_key, test_id);
 
 -- Index for school-level queries
 CREATE INDEX IF NOT EXISTS idx_scores_school
-  ON analytics.fact_scores (school_code, year_key, subject);
+  ON analytics.fact_scores (school_code, year_key, test_id);
 
 -- Index for subgroup analysis
 CREATE INDEX IF NOT EXISTS idx_scores_subgroup
-  ON analytics.fact_scores (subgroup, year_key, subject);
+  ON analytics.fact_scores (subgroup, year_key, test_id);
 
 -- Partial index for non-null school names (for text searches)
 CREATE INDEX IF NOT EXISTS idx_scores_school_name
