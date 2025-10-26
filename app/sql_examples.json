@@ -1,0 +1,32 @@
+[
+  {
+    "question": "Average ELA proficiency for Hispanic students in grade 5 at a specific school",
+    "notes": "Use subgroup ID from entity search and filter by cds_code",
+    "sql": "SELECT AVG(pct_met_and_above) AS average_proficiency\nFROM analytics.fact_scores\nWHERE test_id = 1\n  AND subgroup = '78'\n  AND grade = '5'\n  AND cds_code = '09618530932756';"
+  },
+  {
+    "question": "Top 10 districts by Math proficiency in the latest year",
+    "notes": "Use latest year via dim_year",
+    "sql": "WITH latest AS (SELECT MAX(year_key) AS y FROM analytics.dim_year)\nSELECT district_name, AVG(pct_met_and_above) AS avg_prof\nFROM analytics.fact_scores, latest\nWHERE test_id = 2\n  AND year_key = latest.y\nGROUP BY district_name\nORDER BY avg_prof DESC\nLIMIT 10;"
+  },
+  {
+    "question": "Trend of Math proficiency for subgroup ID 78 in Oakland Unified",
+    "notes": "Filter by cds_code for the district and group by year",
+    "sql": "SELECT year_key, AVG(pct_met_and_above) AS avg_prof\nFROM analytics.fact_scores\nWHERE test_id = 2\n  AND subgroup = '78'\n  AND cds_code = '01901290100000'\nGROUP BY year_key\nORDER BY year_key;"
+  },
+  {
+    "question": "Compare ELA mean scale scores for English Learners vs All students in latest year",
+    "notes": "Join against latest year and use subgroup IDs (e.g., EL='127', All='0')",
+    "sql": "WITH latest AS (SELECT MAX(year_key) AS y FROM analytics.dim_year)\nSELECT subgroup, AVG(mean_scale_score) AS avg_score\nFROM analytics.fact_scores, latest\nWHERE test_id = 1 AND year_key = latest.y AND subgroup IN ('127','0')\nGROUP BY subgroup\nORDER BY subgroup;"
+  },
+  {
+    "question": "Schools in Los Angeles Unified with highest ELA proficiency (latest year)",
+    "notes": "Filter by district’s cds_code pattern and latest year",
+    "sql": "WITH latest AS (SELECT MAX(year_key) AS y FROM analytics.dim_year)\nSELECT school_name, AVG(pct_met_and_above) AS avg_prof\nFROM analytics.fact_scores, latest\nWHERE test_id = 1\n  AND year_key = latest.y\n  AND cds_code LIKE '19%64733%'\nGROUP BY school_name\nORDER BY avg_prof DESC\nLIMIT 10;"
+  },
+  {
+    "question": "Top 10 counties by Asian proficiency for ELA in 2025 and how many students tested",
+    "notes": "Use subgroup ID for Asian (76). Restrict to county-level rows where district_code='00000' and school_code='0000000' to avoid double counting.",
+    "sql": "SELECT county_name, county_code, COALESCE(SUM(tested), 0) AS total_tested, COALESCE(AVG(pct_met_and_above), 0) AS avg_prof\nFROM analytics.fact_scores\nWHERE test_id = 1\n  AND subgroup = '76'\n  AND year_key = 2025\n  AND district_code = '00000'\n  AND school_code = '0000000'\n  AND grade = '13'\nGROUP BY county_name, county_code\nORDER BY avg_prof DESC\nLIMIT 10;"
+  }
+]

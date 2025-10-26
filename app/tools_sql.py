@@ -1,4 +1,4 @@
-import json, os
+import json, os, re
 from sqlalchemy import create_engine, text
 from langchain_community.utilities import SQLDatabase
 from langchain_community.tools.sql_database.tool import (
@@ -13,16 +13,20 @@ class SQLToolkit:
     
     def __init__(self, pg_url: str, whitelist_path: str):
         self.engine = create_engine(pg_url, pool_pre_ping=True)
-        
+        self.last_query_text = None
+        self.last_error_text = None
+
         # Load schema whitelist
         with open(whitelist_path, "r") as f:
             self.schema = json.load(f)
-        
-        # Create SQLDatabase instance
+
+        # Keep whitelist table keys as fully-qualified names
+        self.table_keys = list(self.schema.get("tables", {}).keys())
+
+        # Create SQLDatabase instance without setting schema (avoids SET search_path issues)
         self.db = SQLDatabase.from_uri(
-            pg_url, 
-            include_tables=list(self.schema["tables"].keys()),
-            sample_rows_in_table_info=3
+            pg_url,
+            sample_rows_in_table_info=3,
         )
         
         # Track SQL query errors for retry limit
@@ -32,11 +36,30 @@ class SQLToolkit:
     def get_tools(self):
         """Return list of SQL tools for the agent (without retry limit)"""
         
-        # List tables tool
-        list_tables_tool = ListSQLDatabaseTool(db=self.db)
-        
-        # Get schema tool
-        get_schema_tool = InfoSQLDatabaseTool(db=self.db)
+        # List tables tool (from whitelist)
+        def list_tables_impl(_: str = "") -> str:
+            return ", ".join(self.table_keys)
+
+        list_tables_tool = Tool(
+            name="sql_db_list_tables",
+            description="List available tables (from whitelist).",
+            func=list_tables_impl,
+        )
+
+        # Get schema tool (from whitelist)
+        def schema_info_impl(_: str = "") -> str:
+            parts = []
+            for tbl, cols in self.schema.get("tables", {}).items():
+                parts.append(f"Table: {tbl}\nColumns: {', '.join(cols)}")
+            return "\n\n".join(parts)
+
+        get_schema_tool = Tool(
+            name="sql_db_schema",
+            description=(
+                "Get table schemas (from whitelist). Use fully-qualified names like analytics.fact_scores."
+            ),
+            func=schema_info_impl,
+        )
         
         # Query tool with safety wrapper
         def safe_query_wrapper(query: str) -> str:
@@ -47,9 +70,12 @@ class SQLToolkit:
                 return "Error: Only SELECT queries are allowed."
             
             try:
+                self.last_query_text = query
                 result = self.db.run(query)
+                self.last_error_text = None
                 return result
             except Exception as e:
+                self.last_error_text = str(e)
                 return f"Error executing query: {str(e)}"
         
         query_tool = Tool(
@@ -57,7 +83,10 @@ class SQLToolkit:
             description=(
                 "Execute a SQL query against the database and get results. "
                 "Input should be a valid SQL SELECT query. "
-                "Always check the schema with sql_db_schema first before querying."
+                "Always check the schema with sql_db_schema first before querying. "
+                "Use fully-qualified table names (e.g., analytics.fact_scores). "
+                "Entities: ALWAYS filter by cds_code from entity lookup (not county_code/district_code/school_code). "
+                "Subgroups: Use subgroup IDs from entity lookup (not names)."
             ),
             func=safe_query_wrapper
         )
@@ -71,11 +100,30 @@ class SQLToolkit:
         self.error_count = 0
         self.last_query_succeeded = True
         
-        # List tables tool
-        list_tables_tool = ListSQLDatabaseTool(db=self.db)
-        
-        # Get schema tool
-        get_schema_tool = InfoSQLDatabaseTool(db=self.db)
+        # List tables tool (from whitelist)
+        def list_tables_impl(_: str = "") -> str:
+            return ", ".join(self.table_keys)
+
+        list_tables_tool = Tool(
+            name="sql_db_list_tables",
+            description="List available tables (from whitelist).",
+            func=list_tables_impl,
+        )
+
+        # Get schema tool (from whitelist)
+        def schema_info_impl(_: str = "") -> str:
+            parts = []
+            for tbl, cols in self.schema.get("tables", {}).items():
+                parts.append(f"Table: {tbl}\nColumns: {', '.join(cols)}")
+            return "\n\n".join(parts)
+
+        get_schema_tool = Tool(
+            name="sql_db_schema",
+            description=(
+                "Get table schemas (from whitelist). Use fully-qualified names like analytics.fact_scores."
+            ),
+            func=schema_info_impl,
+        )
         
         # Query tool with safety wrapper and retry limit
         def safe_query_with_retry_limit(query: str) -> str:
@@ -94,16 +142,19 @@ class SQLToolkit:
                 )
             
             try:
+                self.last_query_text = query
                 result = self.db.run(query)
                 # Reset error count on success
                 self.error_count = 0
                 self.last_query_succeeded = True
+                self.last_error_text = None
                 return result
             except Exception as e:
                 # Increment error count
                 self.error_count += 1
                 self.last_query_succeeded = False
                 
+                self.last_error_text = str(e)
                 error_msg = f"Error executing query (attempt {self.error_count}/{self.max_attempts}): {str(e)}"
                 
                 if self.error_count >= self.max_attempts:
@@ -120,6 +171,9 @@ class SQLToolkit:
                 "Execute a SQL query against the database and get results. "
                 "Input should be a valid SQL SELECT query. "
                 "Always check the schema with sql_db_schema first before querying. "
+                "Use fully-qualified table names (e.g., analytics.fact_scores). "
+                "Entities: ALWAYS filter by cds_code from entity lookup (not county_code/district_code/school_code). "
+                "Subgroups: Use subgroup IDs from entity lookup (not names). "
                 f"You have up to {max_attempts} attempts to fix errors before giving up."
             ),
             func=safe_query_with_retry_limit

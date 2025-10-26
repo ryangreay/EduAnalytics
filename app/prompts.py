@@ -37,6 +37,10 @@ CRITICAL TOOL USAGE INSTRUCTIONS:
    - Use ILIKE for case-insensitive text matching
    - For "latest year", use MAX(year_key) or ORDER BY year_key DESC LIMIT 1
    - Common columns: year_key, test_id (1 = ELA, 2 = Math), subgroup, grade, county_code, district_code, school_code
+   - ALWAYS use fully-qualified table names like analytics.fact_scores
+   - ENTITIES: When a county, district, or school is mentioned, FIRST call search_proper_nouns, extract cds_code, and filter with cds_code = '<CDS>' (do NOT use county_code/district_code/school_code)
+   - SUBGROUPS: The subgroup column stores IDs (as text), not names. When a subgroup name is mentioned, FIRST call search_proper_nouns, extract the subgroup ID, and filter with subgroup = '<ID>'
+   - GRADES: The grade column stores IDs (as text), not names. If no grade is mentioned, ALWAYS use grade = '13' for all grades. When a grade name is mentioned, FIRST call search_proper_nouns, extract the grade ID, and filter with grade = '<ID>'
    - Proficiency metrics: pct_met_and_above, mean_scale_score, tested, tested_with_scores
    - Use appropriate aggregations (AVG, SUM, COUNT) and ORDER BY for rankings
 

@@ -71,7 +71,8 @@ class EntityResolver:
                 "Use this tool to look up proper nouns and identifiers before filtering data. "
                 "Input should be an approximate spelling of a county, district, school, student subgroup, "
                 "grade, or test name. Output will be the correct names and IDs to use in SQL queries. "
-                "ALWAYS use this tool before filtering on entity names, subgroups, or grades."
+                "Each entity has a unique CDS code that is a combination of the county code, district code, and school code and can be used to filter on cds_code in the fact_scores table."
+                "ALWAYS use this tool before filtering on entity names, subject/test subgroups, or grades."
             ),
             func=self.search_as_text
         )

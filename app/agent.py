@@ -6,6 +6,7 @@ from langgraph.graph import StateGraph, END
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import create_react_agent
 
+import json, os
 from .prompts import REACT_SYSTEM_PROMPT
 from .tools_sql import SQLToolkit
 from .tools_entity import EntityResolver
@@ -32,14 +33,40 @@ def create_sql_agent(pg_url: str, whitelist_path: str):
         tools.append(entity_resolver.as_tool())
     
     # Create LLM
-    llm = ChatOpenAI(model="gpt-4o", temperature=0)
+    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
     
-    # Create ReAct agent with iteration limit
+    # Create ReAct agent; fold system prompt into state_modifier (current API doesn't take `prompt`)
+    # Load SQL examples if available and append to system instructions
+    examples_path = os.path.join(os.path.dirname(__file__), "sql_examples.json")
+    examples_text = ""
+    try:
+        if os.path.exists(examples_path):
+            with open(examples_path, "r", encoding="utf-8") as f:
+                ex = json.load(f)
+            if isinstance(ex, list) and len(ex) > 0:
+                blocks = []
+                for item in ex:
+                    q = item.get("question", "").strip()
+                    notes = item.get("notes", "").strip()
+                    sql = item.get("sql", "").strip()
+                    if not q or not sql:
+                        continue
+                    block = f"Q: {q}\n" + (f"Notes: {notes}\n" if notes else "") + f"SQL:\n{sql}"
+                    blocks.append(block)
+                if blocks:
+                    examples_text = "\n\nExamples (Q→SQL):\n" + "\n\n".join(blocks)
+    except Exception:
+        examples_text = ""
+
+    combined_system_instructions = (
+        f"{REACT_SYSTEM_PROMPT}\n\n"
+        "You are analyzing California education data. Stay focused on answering the user's question." 
+        f"{examples_text}"
+    )
     agent = create_react_agent(
         llm,
         tools,
-        prompt=REACT_SYSTEM_PROMPT,
-        state_modifier="You are analyzing California education data. Stay focused on answering the user's question."
+        state_modifier=combined_system_instructions,
     )
     
     return agent, sql_toolkit

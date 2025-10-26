@@ -1,4 +1,5 @@
 import os, re, datetime, json, zipfile, io
+from typing import Optional
 import requests, polars as pl, numpy as np
 from prefect import flow, task, get_run_logger
 from sqlalchemy import create_engine, text
@@ -69,7 +70,7 @@ def delete_scores_for_year(engine, year_key: int):
             pass
 
 @task
-def load_tests(engine, tests: pl.DataFrame, year_key: int):
+def load_tests(engine, tests: pl.DataFrame, year_key: int, county_lookup: Optional[pl.DataFrame] = None):
     logger = get_run_logger()
     if tests is None or tests.height == 0:
         return
@@ -145,12 +146,31 @@ def load_tests(engine, tests: pl.DataFrame, year_key: int):
             ).alias("cds_code")
         )
 
+    # Join county_name from entities-derived lookup if provided
+    if county_lookup is not None and "county_code" in df.columns:
+        try:
+            cl = county_lookup
+            # Ensure normalized/padded codes in the lookup as well
+            if "county_code" in cl.columns:
+                cl = cl.with_columns(
+                    pl.col("county_code").cast(pl.Utf8).str.zfill(2).alias("county_code")
+                )
+            # Only keep necessary columns and unique codes
+            keep_cols = [c for c in ["county_code", "county_name"] if c in cl.columns]
+            if "county_name" in keep_cols:
+                cl = cl.select(keep_cols).unique(subset=["county_code"], keep="first")
+                df = df.join(cl, on="county_code", how="left")
+        except Exception:
+            # Best-effort enrichment; continue without blocking load
+            pass
+
     # Ensure COPY column order and presence to avoid positional mismatches
     expected_cols = [
         "subgroup", "grade", "tested", "tested_with_scores", "mean_scale_score",
         "pct_exceeded", "cnt_exceeded", "pct_met", "cnt_met",
         "pct_met_and_above", "cnt_met_and_above", "pct_nearly_met", "cnt_nearly_met",
         "pct_not_met", "cnt_not_met",
+        "county_name",
         "county_code", "district_code", "school_code",
         "district_name", "school_name", "test_id", "cds_code", "year_key"
     ]
@@ -177,6 +197,7 @@ def load_tests(engine, tests: pl.DataFrame, year_key: int):
                 pct_exceeded, cnt_exceeded, pct_met, cnt_met,
                 pct_met_and_above, cnt_met_and_above, pct_nearly_met, cnt_nearly_met,
                 pct_not_met, cnt_not_met, 
+                county_name,
                 county_code, district_code, school_code,
                 district_name, school_name, test_id, cds_code, year_key
             )
@@ -404,8 +425,13 @@ def caaspp_last_3_years():
             logger.info(f"Entities: {parts['entities'].height if parts['entities'] is not None else 'None'} rows")
             logger.info(f"Tests: {parts['tests'].height if parts['tests'] is not None else 'None'} rows")
             
-            # load tests/results
-            task = load_tests.submit(engine, parts["tests"], y)
+            # load tests/results (enrich with county_name via entities lookup when available)
+            county_lookup = None
+            ents_for_lookup = parts.get("entities")
+            if ents_for_lookup is not None and {"county_code","county_name"}.issubset(set(ents_for_lookup.columns)):
+                county_lookup = ents_for_lookup.select(["county_code","county_name"]).unique(subset=["county_code"], keep="first")
+
+            task = load_tests.submit(engine, parts["tests"], y, county_lookup)
             load_tasks.append(task)
             
             # Parse and prepare entities for Pinecone (only for latest year)
