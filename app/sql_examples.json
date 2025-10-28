@@ -1,32 +1,39 @@
 [
   {
     "question": "Average ELA proficiency for Hispanic students in grade 5 at a specific school",
-    "notes": "Use subgroup ID from entity search and filter by cds_code",
-    "sql": "SELECT AVG(pct_met_and_above) AS average_proficiency\nFROM analytics.fact_scores\nWHERE test_id = 1\n  AND subgroup = '78'\n  AND grade = '5'\n  AND cds_code = '09618530932756';"
+    "notes": "Use subgroup ID from entity search and filter by cds_code. All dimensions are filtered (entity, subgroup, grade, test)",
+    "sql": "SELECT COALESCE(AVG(pct_met_and_above), 0) AS average_proficiency\nFROM analytics.fact_scores\nWHERE test_id = '1'\n  AND subgroup = '78'\n  AND grade = '5'\n  AND cds_code = '09618530932756';",
+    "chart_spec_example": "```chart\n{\n  \"chart_type\": \"donut\",\n  \"title\": \"ELA Proficiency - Hispanic Grade 5\",\n  \"label_format\": \"percent\",\n  \"value\": 45.2,\n  \"data\": [{\"average_proficiency\": 45.2}]\n}\n```"
   },
   {
     "question": "Top 10 districts by Math proficiency in the latest year",
-    "notes": "Use latest year via dim_year",
-    "sql": "WITH latest AS (SELECT MAX(year_key) AS y FROM analytics.dim_year)\nSELECT district_name, AVG(pct_met_and_above) AS avg_prof\nFROM analytics.fact_scores, latest\nWHERE test_id = 2\n  AND year_key = latest.y\nGROUP BY district_name\nORDER BY avg_prof DESC\nLIMIT 10;"
+    "notes": "Use latest year via dim_year. COALESCE in ORDER BY prevents NULL from sorting to top. No entity/subgroup/grade mentioned so defaults apply",
+    "sql": "WITH latest AS (SELECT MAX(year_key) AS y FROM analytics.dim_year)\nSELECT district_name, COALESCE(AVG(pct_met_and_above), 0) AS avg_prof\nFROM analytics.fact_scores, latest\nWHERE test_id = '2'\n  AND year_key = latest.y\n  AND grade = '13'\n  AND subgroup = '1'\n  AND county_code <> '00'\n  AND district_code <> '00000'\n  AND school_code = '0000000'\nGROUP BY district_name\nORDER BY COALESCE(AVG(pct_met_and_above), 0) DESC\nLIMIT 10;",
+    "chart_spec_example": "```chart\n{\n  \"chart_type\": \"bar\",\n  \"title\": \"Top 10 Districts by Math Proficiency\",\n  \"label_format\": \"percent\",\n  \"x\": \"district_name\",\n  \"y\": \"avg_prof\",\n  \"data\": [{\"district_name\": \"District A\", \"avg_prof\": 67.5}, {\"district_name\": \"District B\", \"avg_prof\": 65.2}]\n}\n```"
   },
   {
     "question": "Trend of Math proficiency for subgroup ID 78 in Oakland Unified",
-    "notes": "Filter by cds_code for the district and group by year",
-    "sql": "SELECT year_key, AVG(pct_met_and_above) AS avg_prof\nFROM analytics.fact_scores\nWHERE test_id = 2\n  AND subgroup = '78'\n  AND cds_code = '01901290100000'\nGROUP BY year_key\nORDER BY year_key;"
+    "notes": "Filter by cds_code for the district and group by year. No grade mentioned so use '13' (all grades)",
+    "sql": "SELECT year_key, COALESCE(AVG(pct_met_and_above), 0) AS avg_prof\nFROM analytics.fact_scores\nWHERE test_id = '2'\n  AND subgroup = '78'\n  AND grade = '13'\n  AND cds_code = '01901290100000'\nGROUP BY year_key\nORDER BY year_key;"
   },
   {
-    "question": "Compare ELA mean scale scores for English Learners vs All students in latest year",
-    "notes": "Join against latest year and use subgroup IDs (e.g., EL='127', All='0')",
-    "sql": "WITH latest AS (SELECT MAX(year_key) AS y FROM analytics.dim_year)\nSELECT subgroup, AVG(mean_scale_score) AS avg_score\nFROM analytics.fact_scores, latest\nWHERE test_id = 1 AND year_key = latest.y AND subgroup IN ('127','0')\nGROUP BY subgroup\nORDER BY subgroup;"
+    "question": "Compare mean scale scores for English Learners vs All students in latest year",
+    "notes": "No mention of entity so statewide (cds_code = '00000000000000'). No grade mentioned so '13'. No test mentioned so show both ELA and Math",
+    "sql": "WITH latest AS (SELECT MAX(year_key) AS y FROM analytics.dim_year)\nSELECT subgroup, test_id, COALESCE(AVG(mean_scale_score), 0) AS avg_scale_score\nFROM analytics.fact_scores, latest\nWHERE year_key = latest.y\n  AND grade = '13'\n  AND cds_code = '00000000000000'\n  AND subgroup IN ('127', '1')\n  AND test_id IN ('1', '2')\nGROUP BY test_id, subgroup\nORDER BY test_id, subgroup;"
   },
   {
     "question": "Schools in Los Angeles Unified with highest ELA proficiency (latest year)",
-    "notes": "Filter by district’s cds_code pattern and latest year",
-    "sql": "WITH latest AS (SELECT MAX(year_key) AS y FROM analytics.dim_year)\nSELECT school_name, AVG(pct_met_and_above) AS avg_prof\nFROM analytics.fact_scores, latest\nWHERE test_id = 1\n  AND year_key = latest.y\n  AND cds_code LIKE '19%64733%'\nGROUP BY school_name\nORDER BY avg_prof DESC\nLIMIT 10;"
+    "notes": "Filter by district's cds_code pattern and latest year. COALESCE in ORDER BY prevents NULLs from ranking at top. No subgroup/grade mentioned so defaults",
+    "sql": "WITH latest AS (SELECT MAX(year_key) AS y FROM analytics.dim_year)\nSELECT school_name, COALESCE(AVG(pct_met_and_above), 0) AS avg_prof\nFROM analytics.fact_scores, latest\nWHERE test_id = '1'\n  AND year_key = latest.y\n  AND county_code = '19' AND district_code <> '00000' AND school_code <> '0000000' \n  AND grade = '13'\n  AND subgroup = '1'\nGROUP BY school_name\nORDER BY COALESCE(AVG(pct_met_and_above), 0) DESC\nLIMIT 10;"
   },
   {
     "question": "Top 10 counties by Asian proficiency for ELA in 2025 and how many students tested",
-    "notes": "Use subgroup ID for Asian (76). Restrict to county-level rows where district_code='00000' and school_code='0000000' to avoid double counting.",
-    "sql": "SELECT county_name, county_code, COALESCE(SUM(tested), 0) AS total_tested, COALESCE(AVG(pct_met_and_above), 0) AS avg_prof\nFROM analytics.fact_scores\nWHERE test_id = 1\n  AND subgroup = '76'\n  AND year_key = 2025\n  AND district_code = '00000'\n  AND school_code = '0000000'\n  AND grade = '13'\nGROUP BY county_name, county_code\nORDER BY avg_prof DESC\nLIMIT 10;"
+    "notes": "Use subgroup ID for Asian (76). Restrict to county-level rows where district_code='00000' and school_code='0000000' and county_code <> '00' to avoid double counting. COALESCE in ORDER BY for proper ranking. No grade mentioned so '13'",
+    "sql": "SELECT county_name, county_code, COALESCE(SUM(tested), 0) AS total_tested, COALESCE(AVG(pct_met_and_above), 0) AS avg_prof\nFROM analytics.fact_scores\nWHERE test_id = '1'\n  AND subgroup = '76'\n  AND year_key = 2025\n  AND district_code = '00000'\n  AND school_code = '0000000'\n  AND county_code <> '00'\n  AND grade = '13'\nGROUP BY county_name, county_code\nORDER BY COALESCE(AVG(pct_met_and_above), 0) DESC\nLIMIT 10;"
+  },
+  {
+    "question": "Math Proficiency/Performance Band breakdown for each district for Males in the latest year in Fresno County",
+    "notes": "Use subgroup ID for Males (3). Restrict to district-level rows where county_code = '09' and district_code <> '00000' and school_code = '0000000' to avoid double counting. All dimensions filtered",
+    "sql": "SELECT county_name, district_name, COALESCE(tested, 0) AS tested, \n       COALESCE(pct_exceeded, 0) AS pct_exceeded, COALESCE(cnt_exceeded, 0) AS cnt_exceeded,\n       COALESCE(pct_met, 0) AS pct_met, COALESCE(cnt_met, 0) AS cnt_met,\n       COALESCE(pct_nearly_met, 0) AS pct_nearly_met, COALESCE(cnt_nearly_met, 0) AS cnt_nearly_met,\n       COALESCE(pct_not_met, 0) AS pct_not_met, COALESCE(cnt_not_met, 0) AS cnt_not_met\nFROM analytics.fact_scores\nWHERE year_key = (SELECT MAX(year_key) FROM analytics.dim_year)\n  AND county_code = '09'\n  AND district_code <> '00000'\n  AND school_code = '0000000'\n  AND subgroup = '3'\n  AND grade = '13'\n  AND test_id = '2'\nORDER BY district_name;"
   }
 ]

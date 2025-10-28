@@ -33,7 +33,7 @@ def create_sql_agent(pg_url: str, whitelist_path: str):
         tools.append(entity_resolver.as_tool())
     
     # Create LLM
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+    llm = ChatOpenAI(model=os.getenv("LLM_MODEL"), temperature=0)
     
     # Create ReAct agent; fold system prompt into state_modifier (current API doesn't take `prompt`)
     # Load SQL examples if available and append to system instructions
@@ -49,12 +49,15 @@ def create_sql_agent(pg_url: str, whitelist_path: str):
                     q = item.get("question", "").strip()
                     notes = item.get("notes", "").strip()
                     sql = item.get("sql", "").strip()
+                    chart_spec = item.get("chart_spec_example", "").strip()
                     if not q or not sql:
                         continue
                     block = f"Q: {q}\n" + (f"Notes: {notes}\n" if notes else "") + f"SQL:\n{sql}"
+                    if chart_spec:
+                        block += f"\n\nChart Spec:\n{chart_spec}"
                     blocks.append(block)
                 if blocks:
-                    examples_text = "\n\nExamples (Q→SQL):\n" + "\n\n".join(blocks)
+                    examples_text = "\n\nExamples (Q→SQL→Chart):\n" + "\n\n".join(blocks)
     except Exception:
         examples_text = ""
 
@@ -69,7 +72,7 @@ def create_sql_agent(pg_url: str, whitelist_path: str):
         state_modifier=combined_system_instructions,
     )
     
-    return agent, sql_toolkit
+    return agent, sql_toolkit, combined_system_instructions
 
 
 def run_agent_query(agent, question: str, history: list = None):

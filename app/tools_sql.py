@@ -83,10 +83,18 @@ class SQLToolkit:
             description=(
                 "Execute a SQL query against the database and get results. "
                 "Input should be a valid SQL SELECT query. "
-                "Always check the schema with sql_db_schema first before querying. "
-                "Use fully-qualified table names (e.g., analytics.fact_scores). "
-                "Entities: ALWAYS filter by cds_code from entity lookup (not county_code/district_code/school_code). "
-                "Subgroups: Use subgroup IDs from entity lookup (not names)."
+                "\n\n"
+                "⚠️ CRITICAL: Each row is a PRE-AGGREGATED statistic. You MUST filter on ALL dimensions:\n"
+                "   • cds_code: If NO entity mentioned → '00000000000000' (statewide). If mentioned → call search_proper_nouns\n"
+                "   • subgroup: If NO subgroup mentioned → '1' (all students). If mentioned → call search_proper_nouns\n"
+                "   • grade: If NO grade mentioned → '13' (all grades). If mentioned → call search_proper_nouns\n"
+                "   • test_id: If NO test mentioned → IN ('1','2') + GROUP BY test_id. If 'ELA' → '1', if 'Math' → '2'\n"
+                "\n"
+                "Other Rules:\n"
+                "- Only SELECT queries (no INSERT, UPDATE, DELETE, DROP, etc.)\n"
+                "- ALWAYS use fully-qualified table names like analytics.fact_scores\n"
+                "- Use COALESCE(column, 0) in ALL aggregations and in ORDER BY for rankings\n"
+                "- For 'latest year', use MAX(year_key) or ORDER BY year_key DESC LIMIT 1\n"
             ),
             func=safe_query_wrapper
         )
@@ -170,11 +178,19 @@ class SQLToolkit:
             description=(
                 "Execute a SQL query against the database and get results. "
                 "Input should be a valid SQL SELECT query. "
-                "Always check the schema with sql_db_schema first before querying. "
-                "Use fully-qualified table names (e.g., analytics.fact_scores). "
-                "Entities: ALWAYS filter by cds_code from entity lookup (not county_code/district_code/school_code). "
-                "Subgroups: Use subgroup IDs from entity lookup (not names). "
-                f"You have up to {max_attempts} attempts to fix errors before giving up."
+                "\n\n"
+                "⚠️ CRITICAL: Each row is a PRE-AGGREGATED statistic. You MUST filter on ALL dimensions:\n"
+                "   • cds_code: If NO entity mentioned → '00000000000000' (statewide). If mentioned → call search_proper_nouns\n"
+                "   • subgroup: If NO subgroup mentioned → '1' (all students). If mentioned → call search_proper_nouns\n"
+                "   • grade: If NO grade mentioned → '13' (all grades). If mentioned → call search_proper_nouns\n"
+                "   • test_id: If NO test mentioned → IN ('1','2') + GROUP BY test_id. If 'ELA' → '1', if 'Math' → '2'\n"
+                "\n"
+                "Other Rules:\n"
+                "- Only SELECT queries (no INSERT, UPDATE, DELETE, DROP, etc.)\n"
+                "- ALWAYS use fully-qualified table names like analytics.fact_scores\n"
+                "- Use COALESCE(column, 0) in ALL aggregations and in ORDER BY for rankings\n"
+                "- For 'latest year', use MAX(year_key) or ORDER BY year_key DESC LIMIT 1\n"
+                f"- You have up to {max_attempts} attempts to fix errors before giving up\n"
             ),
             func=safe_query_with_retry_limit
         )
