@@ -4,7 +4,7 @@
         "year_key","test_id","subgroup","grade",
         "tested","tested_with_scores","mean_scale_score",
         "pct_exceeded","pct_met","pct_met_and_above","pct_nearly_met","pct_not_met",
-        "district_name","school_name", "county_name","county_code","district_code","school_code","cds_code"
+        "district_name","school_name", "county_name","county_code","district_code","school_code"
       ],
       "analytics.dim_year": ["year_key","label"]
     }

@@ -11,6 +11,8 @@ from .prompts import REACT_SYSTEM_PROMPT
 from .tools_sql import SQLToolkit
 from .tools_entity import EntityResolver
 
+from .prompts import REACT_SYSTEM_PROMPT, REACT_SYSTEM_CHARTS_PROMPT
+
 
 class AgentState(TypedDict):
     """State for the ReAct agent"""
@@ -18,8 +20,14 @@ class AgentState(TypedDict):
     sql_error_count: int  # Track consecutive SQL errors
 
 
-def create_sql_agent(pg_url: str, whitelist_path: str):
-    """Create a ReAct agent for SQL question answering with entity lookup"""
+def create_sql_agent(pg_url: str, whitelist_path: str, charts_enabled: bool = True):
+    """Create a ReAct agent for SQL question answering with entity lookup
+    
+    Args:
+        pg_url: PostgreSQL connection URL
+        whitelist_path: Path to schema whitelist JSON
+        charts_enabled: If True, include charting instructions in system prompt
+    """
     
     # Initialize components
     sql_toolkit = SQLToolkit(pg_url, whitelist_path)
@@ -53,16 +61,19 @@ def create_sql_agent(pg_url: str, whitelist_path: str):
                     if not q or not sql:
                         continue
                     block = f"Q: {q}\n" + (f"Notes: {notes}\n" if notes else "") + f"SQL:\n{sql}"
-                    if chart_spec:
+                    # Only include chart specs if charts are enabled
+                    if chart_spec and charts_enabled:
                         block += f"\n\nChart Spec:\n{chart_spec}"
                     blocks.append(block)
                 if blocks:
-                    examples_text = "\n\nExamples (Q→SQL→Chart):\n" + "\n\n".join(blocks)
+                    example_label = "Examples (Q→SQL→Chart):" if charts_enabled else "Examples (Q→SQL):"
+                    examples_text = f"\n\n{example_label}\n" + "\n\n".join(blocks)
     except Exception:
         examples_text = ""
-
+    
     combined_system_instructions = (
         f"{REACT_SYSTEM_PROMPT}\n\n"
+        f"{REACT_SYSTEM_CHARTS_PROMPT if charts_enabled else ""}\n\n"
         "You are analyzing California education data. Stay focused on answering the user's question." 
         f"{examples_text}"
     )

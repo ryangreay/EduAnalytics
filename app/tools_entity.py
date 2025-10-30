@@ -53,7 +53,7 @@ class EntityResolver:
             
             if entity_type == "entity":
                 label = f"{meta.get('county_name', '')} | {meta.get('district_name', '')} | {meta.get('school_name', '')}".strip(" |")
-                output_lines.append(f"{i}. {label} (CDS: {meta.get('cds_code', 'N/A')})")
+                output_lines.append(f"{i}. {label} (County: {meta.get('county_code', 'N/A')} District: {meta.get('district_code', 'N/A')} School: {meta.get('school_code', 'N/A')})")
             elif entity_type == "subgroup":
                 output_lines.append(f"{i}. {meta.get('demographic_name', '')} (ID: {meta.get('demographic_id', '')})")
             elif entity_type == "test":
@@ -71,7 +71,7 @@ class EntityResolver:
                 "Use this tool to look up proper nouns and identifiers before filtering data. "
                 "Input should be an approximate spelling of a county, district, school, student subgroup, "
                 "grade, or test name. Output will be the correct names and IDs to use in SQL queries. "
-                "Each entity has a unique CDS code that is a combination of the county code, district code, and school code and can be used to filter on cds_code in the fact_scores table."
+                "Each entity has a combination of the county code, district code, and school code and can be used to filter on the same fields in the fact_scores table."
                 "ALWAYS use this tool before filtering on entity names, subject/test subgroups, or grades."
             ),
             func=self.search_as_text

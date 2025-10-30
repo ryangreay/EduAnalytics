@@ -11,9 +11,8 @@ CREATE TABLE IF NOT EXISTS analytics.fact_scores (
   id BIGSERIAL PRIMARY KEY,
   year_key INT REFERENCES analytics.dim_year(year_key),
   test_id INT,
-  --subject TEXT CHECK (subject IN ('Math','ELA')),
-  subgroup TEXT,                      -- Student Group ID or resolved label later
-  grade TEXT,                         -- Grade text/number as provided
+  subgroup INT,                      
+  grade INT,                         
   tested NUMERIC,
   tested_with_scores NUMERIC,
   mean_scale_score NUMERIC,
@@ -32,12 +31,8 @@ CREATE TABLE IF NOT EXISTS analytics.fact_scores (
   district_name TEXT,                 -- keep raw names for now
   district_code TEXT,
   school_name TEXT,                    -- keep raw names for now
-  school_code TEXT,
-  cds_code TEXT
+  school_code TEXT
 );
--- Add index on cds_code
-CREATE INDEX IF NOT EXISTS idx_scores_cds_code
-  ON analytics.fact_scores (cds_code);
 
 -- Composite index for common query patterns (year, subject, grade, subgroup)
 CREATE INDEX IF NOT EXISTS idx_scores_keys

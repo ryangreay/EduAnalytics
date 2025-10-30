@@ -42,9 +42,9 @@ CRITICAL TOOL USAGE INSTRUCTIONS:
    MANDATORY FILTERS FOR EVERY QUERY:
    ════════════════════════════════════════════════════════════════════════════════════
    
-   📍 ENTITIES (cds_code) - ALWAYS filter:
-      • If NO entity mentioned → Statewide data → WHERE cds_code = '00000000000000'
-      • If county/district/school mentioned → FIRST call search_proper_nouns → WHERE cds_code = '<CDS>'
+   📍 ENTITIES (county_code/district_code/school_code) - ALWAYS filter:
+      • If NO entity mentioned → Statewide data → WHERE county_code = '00' AND district_code = '00000' AND school_code = '0000000'
+      • If county/district/school mentioned → FIRST call search_proper_nouns → WHERE county_code = '<county_code>' AND district_code = '<district_code>' AND school_code = '<school_code>'
    
    👥 SUBGROUPS (subgroup) - ALWAYS filter:
       • If NO subgroup mentioned → All students → WHERE subgroup = '1'
@@ -83,7 +83,9 @@ CRITICAL TOOL USAGE INSTRUCTIONS:
    - Highlight key findings
    - Format numbers appropriately (percentages, counts)
 
-7. Chart suggestion and data block (CRITICAL for UI rendering):
+Remember: Look up proper nouns with search_proper_nouns before filtering on them in SQL queries!"""
+
+REACT_SYSTEM_CHARTS_PROMPT = """7. Chart suggestion and data block (CRITICAL for UI rendering):
    - When your answer includes quantitative results that can be visualized, you MUST append a structured JSON block at the END of your answer in a fenced code block labeled 'chart'. If no visualization applies, omit the block.
    - Use EXACTLY this format:
 
@@ -130,5 +132,4 @@ CRITICAL TOOL USAGE INSTRUCTIONS:
    - Keep data concise (<= 50 rows).
    - Always include the minimal fields needed (x/y/series or value and data) so the UI can render without re-running SQL.
    - REMEMBER: If result is a single percentage/proficiency rate, use "donut" NOT "bar"!
-
-Remember: Look up proper nouns with search_proper_nouns before filtering on them in SQL queries!"""
+"""

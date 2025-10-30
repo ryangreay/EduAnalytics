@@ -110,8 +110,7 @@ def load_tests(engine, tests: pl.DataFrame, year_key: int, county_lookup: Option
         "school_code":"school_code",
         "district_name":"district_name",
         "school_name":"school_name",
-        "test_id":"test_id",
-        "cds_code":"cds_code"
+        "test_id":"test_id"
     }
     
     cols = [c for c in ren if c in df.columns]
@@ -172,7 +171,7 @@ def load_tests(engine, tests: pl.DataFrame, year_key: int, county_lookup: Option
         "pct_not_met", "cnt_not_met",
         "county_name",
         "county_code", "district_code", "school_code",
-        "district_name", "school_name", "test_id", "cds_code", "year_key"
+        "district_name", "school_name", "test_id", "year_key"
     ]
 
     # Add any missing columns as nulls so counts don't receive percentages by shift
@@ -199,7 +198,7 @@ def load_tests(engine, tests: pl.DataFrame, year_key: int, county_lookup: Option
                 pct_not_met, cnt_not_met, 
                 county_name,
                 county_code, district_code, school_code,
-                district_name, school_name, test_id, cds_code, year_key
+                district_name, school_name, test_id, year_key
             )
             FROM STDIN WITH (FORMAT CSV, NULL '\\N')
         """
@@ -277,20 +276,18 @@ def build_pinecone_index(entity_dataframes: list[tuple[int, pl.DataFrame]], stud
             county_code = str(r.get("county_code") or "").strip().zfill(2)
             district_code = str(r.get("district_code") or "").strip().zfill(5)
             school_code = str(r.get("school_code") or "").strip().zfill(7)
-            cds_code = f"{county_code}{district_code}{school_code}"
             
             label = " | ".join([county_name, district_name, school_name]).strip(" |")
-            text = f"{label} | CDS:{cds_code}"
+            text = f"{label} | County:{county_code} District:{district_code} School:{school_code}"
             texts.append(text)
             metadatas.append({
                 "type": "entity",
                 "county_name": county_name,
                 "district_name": district_name,
                 "school_name": school_name,
-                "county_code": str(r.get("county_code", "")),
-                "district_code": str(r.get("district_code", "")),
-                "school_code": str(r.get("school_code", "")),
-                "cds_code": cds_code,
+                "county_code": county_code,
+                "district_code": district_code,
+                "school_code": school_code,
                 "year_key": year_key
             })
     
@@ -300,7 +297,7 @@ def build_pinecone_index(entity_dataframes: list[tuple[int, pl.DataFrame]], stud
     if student_groups_df is not None and student_groups_df.height > 0:
         for r in student_groups_df.iter_rows(named=True):
             demo_name = str(r.get("demographic_name", ""))
-            demo_id = str(r.get("demographic_id_num", ""))
+            demo_id = int(r.get("demographic_id_num", ""))
             student_group = str(r.get("student_group", ""))
             
             text = f"{demo_name} (Subgroup ID: {demo_id}, Category: {student_group})"
@@ -318,7 +315,7 @@ def build_pinecone_index(entity_dataframes: list[tuple[int, pl.DataFrame]], stud
     if tests_df is not None and tests_df.height > 0:
         for r in tests_df.iter_rows(named=True):
             test_name = str(r.get("test_name", ""))
-            test_id = str(r.get("test_id_num", ""))
+            test_id = int(r.get("test_id_num", ""))
             
             text = f"{test_name} (Test ID: {test_id})"
             texts.append(text)
@@ -331,15 +328,13 @@ def build_pinecone_index(entity_dataframes: list[tuple[int, pl.DataFrame]], stud
     logger.info(f"Number of tests added: {len(texts)}")
 
     # 4. Add grades
-    grades = ["3", "4", "5", "6", "7", "8", "11", "Grade 3", "Grade 4", "Grade 5", "Grade 6", "Grade 7", "Grade 8", "Grade 11"]
+    grades = [3, 4, 5, 6, 7, 8, 11, 13]
     for grade in grades:
-        texts.append(f"Grade {grade}")
-        metadatas.append({
-            "type": "grade",
-            "grade": grade
-        })
-    
-    logger.info(f"Number of grades added: {len(texts)}")
+        grade = int(grade)
+        texts.append(f"Grade {grade}" if grade != 13 else "All Grades")
+        metadatas.append({"type": "grade", "grade": grade})
+
+    logger.info(f"Grade texts added: {texts}, metadatas: {metadatas}")
 
     # Upload to Pinecone in batches
     if texts:
