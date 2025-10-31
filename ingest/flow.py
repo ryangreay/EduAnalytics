@@ -290,9 +290,10 @@ def build_pinecone_index(entity_dataframes: list[tuple[int, pl.DataFrame]], stud
                 "school_code": school_code,
                 "year_key": year_key
             })
-    
+
     logger.info(f"Number of entities added: {len(texts)}")
-    
+    currLen = len(texts)
+
     # 2. Add student groups/subgroups
     if student_groups_df is not None and student_groups_df.height > 0:
         for r in student_groups_df.iter_rows(named=True):
@@ -309,7 +310,8 @@ def build_pinecone_index(entity_dataframes: list[tuple[int, pl.DataFrame]], stud
                 "student_group": student_group
             })
 
-    logger.info(f"Number of student groups added: {len(texts)}")
+    logger.info(f"Number of student groups added: {len(texts) - currLen}")
+    currLen = len(texts)
 
     # 3. Add tests
     if tests_df is not None and tests_df.height > 0:
@@ -325,7 +327,8 @@ def build_pinecone_index(entity_dataframes: list[tuple[int, pl.DataFrame]], stud
                 "test_id": test_id
             })
 
-    logger.info(f"Number of tests added: {len(texts)}")
+    logger.info(f"Number of tests added: {len(texts) - currLen}")
+    currLen = len(texts)
 
     # 4. Add grades
     grades = [3, 4, 5, 6, 7, 8, 11, 13]
@@ -334,7 +337,8 @@ def build_pinecone_index(entity_dataframes: list[tuple[int, pl.DataFrame]], stud
         texts.append(f"Grade {grade}" if grade != 13 else "All Grades")
         metadatas.append({"type": "grade", "grade": grade})
 
-    logger.info(f"Grade texts added: {texts}, metadatas: {metadatas}")
+    logger.info(f"Number of grades added {len(texts) - currLen}")
+    currLen = len(texts)
 
     # Upload to Pinecone in batches
     if texts:
