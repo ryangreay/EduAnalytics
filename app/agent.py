@@ -73,7 +73,7 @@ def create_sql_agent(pg_url: str, whitelist_path: str, charts_enabled: bool = Tr
     
     combined_system_instructions = (
         f"{REACT_SYSTEM_PROMPT}\n\n"
-        f"{REACT_SYSTEM_CHARTS_PROMPT if charts_enabled else ""}\n\n"
+        f"{REACT_SYSTEM_CHARTS_PROMPT if charts_enabled else None}\n\n"
         "You are analyzing California education data. Stay focused on answering the user's question." 
         f"{examples_text}"
     )

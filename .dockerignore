@@ -41,6 +41,9 @@ wheels/
 
 # Data and cache
 data/
+sample_data/
+ingest/
+db/
 *.db
 *.sqlite
 *.log
@@ -55,9 +58,6 @@ instructions.txt
 # Tests
 test_*.py
 *_test.py
-
-# Sensitive files
-pinecone_api_key.txt
 
 # OS
 .DS_Store
