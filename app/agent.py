@@ -34,7 +34,7 @@ def create_sql_agent(pg_url: str, whitelist_path: str, charts_enabled: bool = Tr
     entity_resolver = EntityResolver()
     
     # Get tools with error tracking
-    tools = sql_toolkit.get_tools_with_retry_limit(max_attempts=3)
+    tools = sql_toolkit.get_tools_with_retry_limit(max_attempts=4)
     
     # Add entity resolver tool if enabled
     if entity_resolver.enabled:
@@ -43,7 +43,7 @@ def create_sql_agent(pg_url: str, whitelist_path: str, charts_enabled: bool = Tr
     # Create LLM
     llm = ChatOpenAI(model=os.getenv("LLM_MODEL"), temperature=0)
     
-    # Create ReAct agent; fold system prompt into state_modifier (current API doesn't take `prompt`)
+    # Create ReAct agent
     # Load SQL examples if available and append to system instructions
     examples_path = os.path.join(os.path.dirname(__file__), "sql_examples.json")
     examples_text = ""

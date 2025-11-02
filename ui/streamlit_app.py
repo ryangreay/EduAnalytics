@@ -17,11 +17,14 @@ from app.agent import create_sql_agent
 
 load_dotenv(PROJECT_ROOT / ".env")
 
+# Determine if we're in dev mode
+IS_DEV_MODE = os.getenv("ENV", "production").lower() == "dev"
+
 st.set_page_config(page_title="CAASPP SQL Chat", layout="wide")
 st.title("CAASPP ELA/Math AI Assistant")
 
 st.markdown("""
-Ask questions about California education data and I'll help you find answers using SQL queries and entity lookups. Specificity helps! Example: "Top 10 counties by Asian proficiency for ELA for all grades in 2025 and how many students tested" is better than "Top 10 counties by Asian proficiency".
+Ask questions about California education data and I'll help you find answers using SQL queries and entity lookups. Specificity helps! Additionally, if you do or do not want a chart output alongside an answer, you can hit the checkbox on the left or just tell the assistant that you don't want a chart when you ask you question.
 """)
 
 PG_URL = (
@@ -203,23 +206,33 @@ def _render_chart(spec: dict):
             for yk in y_field:
                 y_vals = [row.get(yk) for row in data]
                 fig.add_bar(name=str(yk), x=x_vals, y=y_vals)
+            if chart_type == "stacked_bar":
+                fig.update_layout(barmode="stack")
         elif series_field:
             # long form with series column
-            # group by series values
-            series_values = []
+            # group by series values - using dict to maintain order and avoid hashability issues
+            series_map = {}
+            x_map = {}
             for row in data:
                 sv = row.get(series_field)
-                if sv not in series_values:
-                    series_values.append(sv)
-            x_values_unique = []
-            for row in data:
                 xv = row.get(x_field)
-                if xv not in x_values_unique:
-                    x_values_unique.append(xv)
+                # Convert to string to ensure hashability
+                sv_key = str(sv) if sv is not None else "null"
+                xv_key = str(xv) if xv is not None else "null"
+                if sv_key not in series_map:
+                    series_map[sv_key] = sv
+                if xv_key not in x_map:
+                    x_map[xv_key] = xv
+            
+            series_values = list(series_map.values())
+            x_values_unique = list(x_map.values())
+            
             for sv in series_values:
+                sv_key = str(sv) if sv is not None else "null"
                 y_vals = []
                 for xv in x_values_unique:
-                    match = next((r for r in data if r.get(series_field) == sv and r.get(x_field) == xv), None)
+                    xv_key = str(xv) if xv is not None else "null"
+                    match = next((r for r in data if str(r.get(series_field)) == sv_key and str(r.get(x_field)) == xv_key), None)
                     y_vals.append(match.get(y_field) if match else 0)
                 fig.add_bar(name=str(sv), x=x_values_unique, y=y_vals)
             if chart_type == "stacked_bar":
@@ -357,15 +370,18 @@ with st.sidebar:
         get_agent.clear()
         st.rerun()
     
-    st.checkbox("Enable Chart Debug", key="chart_debug")
+    # Only show debug checkbox in dev mode
+    if IS_DEV_MODE:
+        st.checkbox("Enable Chart Debug", key="chart_debug")
     
     st.divider()
     st.header("💡 Example Questions")
     
     examples = [
         "Show top 10 districts by Math proficiency in the latest year",
+        "Show the Math proficiency band breakdowns for each grade in El Dorado County in the latest year",
         "What is the average ELA proficiency for Hispanic students in grade 5?",
-        "Compare Math scores for English learners vs. all students in 2025",
+        "Compare Math proficiency scores for English learners vs. all students in 2025",
         "Which schools in Los Angeles Unified have the highest proficiency?",
         "Show ELA trends for socioeconomically disadvantaged students over the last 2 years",
     ]
@@ -406,53 +422,55 @@ with st.sidebar:
     - **Breakdowns**: By county, district, school, student subgroup
     """)
 
-    st.divider()
-    st.subheader("🩺 Diagnostics")
-    if diagnostics.get("can_connect"):
-        st.success("Database connection: OK")
-    else:
-        st.error("Database connection: FAILED")
-        err = diagnostics.get("connect_error")
-        if err:
-            st.caption(err)
-
-    fact_count = diagnostics.get("fact_scores_count")
-    if fact_count is not None:
-        st.write(f"Rows in analytics.fact_scores: {fact_count:,}")
-    elif diagnostics.get("fact_scores_error"):
-        st.caption(f"fact_scores error: {diagnostics['fact_scores_error']}")
-
-    max_year = diagnostics.get("max_year")
-    if max_year is not None:
-        st.write(f"Latest year (dim_year): {max_year}")
-    elif diagnostics.get("year_error"):
-        st.caption(f"year error: {diagnostics['year_error']}")
-
-    with st.expander("Show table info"):
-        ti = diagnostics.get("table_info")
-        if isinstance(ti, str):
-            st.text(ti)
+    # Only show diagnostics section in dev mode
+    if IS_DEV_MODE:
+        st.divider()
+        st.subheader("🩺 Diagnostics")
+        if diagnostics.get("can_connect"):
+            st.success("Database connection: OK")
         else:
-            st.write(ti)
-    
-    with st.expander("Last SQL attempt"):
-        st.caption("Shows the most recent SQL the agent tried to run and any error returned.")
-        try:
-            last_q = getattr(sql_toolkit, "last_query_text", None)
-            last_e = getattr(sql_toolkit, "last_error_text", None)
-            if last_q:
-                st.code(last_q, language="sql")
-            if last_e:
-                st.caption(last_e)
-            if not last_q and not last_e:
-                st.write("No SQL attempts yet in this session.")
-        except Exception as _:
-            st.write("Unable to read last SQL attempt.")
-    with st.expander("Agent System Instructions"):
-        try:
-            st.code(system_instructions)
-        except Exception:
-            st.caption("Unable to load system instructions.")
+            st.error("Database connection: FAILED")
+            err = diagnostics.get("connect_error")
+            if err:
+                st.caption(err)
+
+        fact_count = diagnostics.get("fact_scores_count")
+        if fact_count is not None:
+            st.write(f"Rows in analytics.fact_scores: {fact_count:,}")
+        elif diagnostics.get("fact_scores_error"):
+            st.caption(f"fact_scores error: {diagnostics['fact_scores_error']}")
+
+        max_year = diagnostics.get("max_year")
+        if max_year is not None:
+            st.write(f"Latest year (dim_year): {max_year}")
+        elif diagnostics.get("year_error"):
+            st.caption(f"year error: {diagnostics['year_error']}")
+
+        with st.expander("Show table info"):
+            ti = diagnostics.get("table_info")
+            if isinstance(ti, str):
+                st.text(ti)
+            else:
+                st.write(ti)
+        
+        with st.expander("Last SQL attempt"):
+            st.caption("Shows the most recent SQL the agent tried to run and any error returned.")
+            try:
+                last_q = getattr(sql_toolkit, "last_query_text", None)
+                last_e = getattr(sql_toolkit, "last_error_text", None)
+                if last_q:
+                    st.code(last_q, language="sql")
+                if last_e:
+                    st.caption(last_e)
+                if not last_q and not last_e:
+                    st.write("No SQL attempts yet in this session.")
+            except Exception as _:
+                st.write("Unable to read last SQL attempt.")
+        with st.expander("Agent System Instructions"):
+            try:
+                st.code(system_instructions)
+            except Exception:
+                st.caption("Unable to load system instructions.")
     
     if st.button("Clear Chat History"):
         st.session_state.messages = []

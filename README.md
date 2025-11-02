@@ -1,6 +1,6 @@
 # EduAnalytics - CAASPP Education Data AI Assistant
 
-An AI-powered conversational assistant for analyzing California Assessment of Student Performance and Progress (CAASPP) data using Prefect for ETL, LangGraph ReAct agents, SQL database queries, and Pinecone vector embeddings for entity resolution. The chat aspect is built using streamlit, password protected and hosted through fly.io. Contact me for access.
+An AI-powered conversational assistant for analyzing California Assessment of Student Performance and Progress (CAASPP) data using Prefect for ETL, LangGraph ReAct agents, SQL database queries, and Pinecone vector embeddings for entity resolution. The chat aspect is built using Streamlit and hosted through fly.io at [https://cdeanalytics.fly.dev](https://cdeanalytics.fly.dev).
 
 ## Features
 
@@ -93,8 +93,8 @@ EduAnalytics/
 │   ├── tools_sql.py          # SQL toolkit
 │   ├── tools_entity.py       # Pinecone entity resolver
 │   ├── prompts.py            # System prompts
-│   └── schema_whitelist.json # DB schema configuration
-│   └── sql_examples.json # DB schema configuration
+│   ├── schema_whitelist.json # DB schema configuration
+│   └── sql_examples.json     # SQL query examples
 ├── db/
 │   └── ddl.sql               # Database schema
 ├── ingest/

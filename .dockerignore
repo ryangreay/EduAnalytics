@@ -1,0 +1,68 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Git
+.git/
+.gitignore
+
+# Data and cache
+data/
+*.db
+*.sqlite
+*.log
+
+# Documentation
+*.md
+!README.md
+SETUP_GUIDE.md
+UPGRADE_SUMMARY.md
+instructions.txt
+
+# Tests
+test_*.py
+*_test.py
+
+# Sensitive files
+pinecone_api_key.txt
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Fly.io
+fly.toml
+

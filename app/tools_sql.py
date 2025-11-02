@@ -31,77 +31,9 @@ class SQLToolkit:
         
         # Track SQL query errors for retry limit
         self.error_count = 0
-        self.max_attempts = 3
+        self.max_attempts = 4
     
-    def get_tools(self):
-        """Return list of SQL tools for the agent (without retry limit)"""
-        
-        # List tables tool (from whitelist)
-        def list_tables_impl(_: str = "") -> str:
-            return ", ".join(self.table_keys)
-
-        list_tables_tool = Tool(
-            name="sql_db_list_tables",
-            description="List available tables (from whitelist).",
-            func=list_tables_impl,
-        )
-
-        # Get schema tool (from whitelist)
-        def schema_info_impl(_: str = "") -> str:
-            parts = []
-            for tbl, cols in self.schema.get("tables", {}).items():
-                parts.append(f"Table: {tbl}\nColumns: {', '.join(cols)}")
-            return "\n\n".join(parts)
-
-        get_schema_tool = Tool(
-            name="sql_db_schema",
-            description=(
-                "Get table schemas (from whitelist). Use fully-qualified names like analytics.fact_scores."
-            ),
-            func=schema_info_impl,
-        )
-        
-        # Query tool with safety wrapper
-        def safe_query_wrapper(query: str) -> str:
-            """Execute SQL query with safety checks"""
-            # Safety check - block non-SELECT queries
-            lower = query.lower().strip()
-            if any(x in lower for x in ["insert", "update", "delete", "drop", "alter", "create", "truncate"]):
-                return "Error: Only SELECT queries are allowed."
-            
-            try:
-                self.last_query_text = query
-                result = self.db.run(query)
-                self.last_error_text = None
-                return result
-            except Exception as e:
-                self.last_error_text = str(e)
-                return f"Error executing query: {str(e)}"
-        
-        query_tool = Tool(
-            name="sql_db_query",
-            description=(
-                "Execute a SQL query against the database and get results. "
-                "Input should be a valid SQL SELECT query. "
-                "\n\n"
-                "⚠️ CRITICAL: Each row is a PRE-AGGREGATED statistic. You MUST filter on ALL dimensions:\n"
-                "   • county_code/school_code/district_code: If NO entity mentioned → '00'/'00000'/'0000000' (statewide). If mentioned → call search_proper_nouns\n"
-                "   • subgroup: If NO subgroup mentioned → '1' (all students). If mentioned → call search_proper_nouns\n"
-                "   • grade: If NO grade mentioned → '13' (all grades). If mentioned → call search_proper_nouns\n"
-                "   • test_id: If NO test mentioned → IN ('1','2') + GROUP BY test_id. If 'ELA' → '1', if 'Math' → '2'\n"
-                "\n"
-                "Other Rules:\n"
-                "- Only SELECT queries (no INSERT, UPDATE, DELETE, DROP, etc.)\n"
-                "- ALWAYS use fully-qualified table names like analytics.fact_scores\n"
-                "- Use COALESCE(column, 0) in ALL aggregations and in ORDER BY for rankings\n"
-                "- For 'latest year', use MAX(year_key) or ORDER BY year_key DESC LIMIT 1\n"
-            ),
-            func=safe_query_wrapper
-        )
-        
-        return [list_tables_tool, get_schema_tool, query_tool]
-    
-    def get_tools_with_retry_limit(self, max_attempts: int = 3):
+    def get_tools_with_retry_limit(self, max_attempts: int = 4):
         """Return list of SQL tools with retry limit for query errors"""
         
         self.max_attempts = max_attempts
@@ -140,6 +72,25 @@ class SQLToolkit:
             lower = query.lower().strip()
             if any(x in lower for x in ["insert", "update", "delete", "drop", "alter", "create", "truncate"]):
                 return "Error: Only SELECT queries are allowed."
+            
+            # Check if we are querying fact_scores. If so, check if there is a filter on every dimension.
+            error_msg = "Error: You must filter on every dimension. "
+            if "fact_scores" in query.lower():
+                if "county_code" not in query.lower():
+                    error_msg += "You did not filter on county_code. "
+                if "district_code" not in query.lower():
+                    error_msg += "You did not filter on district_code. "
+                if "school_code" not in query.lower():
+                    error_msg += "You did not filter on school_code. "
+                if "subgroup" not in query.lower():
+                    error_msg += "You did not filter on subgroup. "
+                if "grade" not in query.lower():
+                    error_msg += "You did not filter on grade. "
+                if "test_id" not in query.lower():
+                    error_msg += "You did not filter on test_id. "
+
+            if error_msg != "Error: You must filter on every dimension. ":
+                return error_msg
             
             # Check if we've exceeded retry limit
             if self.error_count >= self.max_attempts:
