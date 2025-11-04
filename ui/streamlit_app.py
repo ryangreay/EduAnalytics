@@ -24,7 +24,7 @@ st.set_page_config(page_title="CAASPP SQL Chat", layout="wide")
 st.title("CAASPP ELA/Math AI Assistant")
 
 st.markdown("""
-Ask questions about California education data and I'll help you find answers using SQL queries and entity lookups. Specificity helps! Additionally, if you do or do not want a chart output alongside an answer, you can hit the checkbox on the left or just tell the assistant that you don't want a chart when you ask you question.
+Ask questions about California education data and I'll help you find answers using SQL queries and entity lookups. Specificity helps! Additionally, if you do or do not want a chart output alongside an answer, you can hit the checkbox on the left or just tell the assistant that you don't want a chart when you ask the question. The current implementation uses GPT-5 to maximize accuracy, but comes with extra latency. 
 """)
 
 PG_URL = (
@@ -53,6 +53,7 @@ except Exception as e:
     st.stop()
 
 # Diagnostics - cached to avoid repeated DB hits
+# Only run in dev mode to avoid slowing down production startup
 @st.cache_data(show_spinner=False)
 def diagnose(_sql_toolkit):
     info = {}
@@ -71,10 +72,15 @@ def diagnose(_sql_toolkit):
     except Exception as e:
         info["table_info"] = f"Error fetching table info: {e}"
 
-    # Row count in fact table
+    # Row count in fact table - Use approximate count for speed
     try:
         with _sql_toolkit.engine.begin() as con:
-            res = con.execute(text("SELECT COUNT(*) FROM analytics.fact_scores"))
+            # Use reltuples for fast approximate count instead of full COUNT(*)
+            res = con.execute(text("""
+                SELECT reltuples::bigint 
+                FROM pg_class 
+                WHERE oid = 'analytics.fact_scores'::regclass
+            """))
             info["fact_scores_count"] = res.scalar()
     except Exception as e:
         info["fact_scores_error"] = str(e)
@@ -89,7 +95,8 @@ def diagnose(_sql_toolkit):
 
     return info
 
-diagnostics = diagnose(sql_toolkit)
+# Only run diagnostics in dev mode to speed up startup
+diagnostics = diagnose(sql_toolkit) if IS_DEV_MODE else None
 
 # Initialize chat history and settings
 if "messages" not in st.session_state:
@@ -398,6 +405,7 @@ with st.sidebar:
             border-radius: 8px;
             font-size: 0.95rem;
             line-height: 1.3;
+            color: #1f2937;
         }
         </style>
         """,
@@ -423,7 +431,7 @@ with st.sidebar:
     """)
 
     # Only show diagnostics section in dev mode
-    if IS_DEV_MODE:
+    if IS_DEV_MODE and diagnostics:
         st.divider()
         st.subheader("🩺 Diagnostics")
         if diagnostics.get("can_connect"):
@@ -436,7 +444,7 @@ with st.sidebar:
 
         fact_count = diagnostics.get("fact_scores_count")
         if fact_count is not None:
-            st.write(f"Rows in analytics.fact_scores: {fact_count:,}")
+            st.write(f"Rows in analytics.fact_scores: {fact_count:,} (approx)")
         elif diagnostics.get("fact_scores_error"):
             st.caption(f"fact_scores error: {diagnostics['fact_scores_error']}")
 

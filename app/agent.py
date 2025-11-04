@@ -41,7 +41,7 @@ def create_sql_agent(pg_url: str, whitelist_path: str, charts_enabled: bool = Tr
         tools.append(entity_resolver.as_tool())
     
     # Create LLM
-    llm = ChatOpenAI(model=os.getenv("LLM_MODEL"), temperature=0)
+    llm = ChatOpenAI(model=os.getenv("LLM_MODEL"), temperature=1)
     
     # Create ReAct agent
     # Load SQL examples if available and append to system instructions
