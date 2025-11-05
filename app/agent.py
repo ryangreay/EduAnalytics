@@ -2,6 +2,7 @@ from typing import Annotated, Sequence
 from typing_extensions import TypedDict
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
 from langchain_openai import ChatOpenAI
+from langchain_anthropic import ChatAnthropic
 from langgraph.graph import StateGraph, END
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import create_react_agent
@@ -40,8 +41,17 @@ def create_sql_agent(pg_url: str, whitelist_path: str, charts_enabled: bool = Tr
     if entity_resolver.enabled:
         tools.append(entity_resolver.as_tool())
     
-    # Create LLM
-    llm = ChatOpenAI(model=os.getenv("LLM_MODEL"), temperature=1)
+    model_name = os.getenv("LLM_MODEL", "claude-sonnet-4-5-20250929")
+    
+    # Check if using Claude or OpenAI based on model name
+    if "claude" in model_name.lower() or "anthropic" in model_name.lower():
+        llm = ChatAnthropic(
+            model=model_name,
+            api_key=os.getenv("CLAUDE_API_KEY"),
+            temperature=0
+        )
+    else:
+        llm = ChatOpenAI(model=model_name, temperature=1)
     
     # Create ReAct agent
     # Load SQL examples if available and append to system instructions

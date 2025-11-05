@@ -24,7 +24,7 @@ st.set_page_config(page_title="CAASPP SQL Chat", layout="wide")
 st.title("CAASPP ELA/Math AI Assistant")
 
 st.markdown("""
-Ask questions about California education data and I'll help you find answers using SQL queries and entity lookups. Specificity helps! Additionally, if you do or do not want a chart output alongside an answer, you can hit the checkbox on the left or just tell the assistant that you don't want a chart when you ask the question. The current implementation uses GPT-5 to maximize accuracy, but comes with extra latency. 
+Ask questions about California education data and I'll help you find answers using SQL queries and entity lookups. Specificity helps! Additionally, if you do or do not want a chart output alongside an answer, you can hit the checkbox on the left or just tell the assistant that you don't want a chart when you ask the question. 
 """)
 
 PG_URL = (
@@ -319,16 +319,21 @@ if prompt := st.chat_input("Ask about Math/ELA (e.g., 'Show top districts by Mat
                 
                 # Run agent with streaming and full history
                 full_response = ""
-                for step in agent.stream(
-                    {"messages": messages},
-                    stream_mode="values"
-                ):
+                for step in agent.stream({"messages": messages},stream_mode="values"):
                     last_message = step["messages"][-1]
                     
                     # If it's an AI message with content, show it
                     if isinstance(last_message, AIMessage) and hasattr(last_message, 'content') and last_message.content:
-                        full_response = last_message.content
-                        response_placeholder.markdown(full_response)
+                        # Filter and extract only text messages
+                        if isinstance(last_message.content, list):
+                            text_messages = [item.get('text', '') for item in last_message.content if item.get('type') == 'text']
+                            full_response = ' '.join(text_messages)
+                        else:
+                            # If content is already a string, use it as-is
+                            full_response = last_message.content
+                        
+                        if full_response:
+                            response_placeholder.markdown(full_response)
                 
                 # Try to parse chart spec from final response and render a chart
                 if st.session_state.charts_enabled:
@@ -385,11 +390,11 @@ with st.sidebar:
     st.header("💡 Example Questions")
     
     examples = [
+        "Which schools in Los Angeles Unified have the highest proficiency?",
         "Show top 10 districts by Math proficiency in the latest year",
         "Show the Math proficiency band breakdowns for each grade in El Dorado County in the latest year",
         "What is the average ELA proficiency for Hispanic students in grade 5?",
         "Compare Math proficiency scores for English learners vs. all students in 2025",
-        "Which schools in Los Angeles Unified have the highest proficiency?",
         "Show ELA trends for socioeconomically disadvantaged students over the last 2 years",
     ]
     
