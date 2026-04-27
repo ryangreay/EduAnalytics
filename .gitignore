@@ -10,3 +10,4 @@ SETUP_GUIDE.md
 README.md
 __pycache__/
 ingest/__pycache__/
+.venv/

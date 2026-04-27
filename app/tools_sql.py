@@ -1,4 +1,4 @@
-import json, os, re
+import json, os, re, time
 from sqlalchemy import create_engine, text
 from langchain_community.utilities import SQLDatabase
 from langchain_community.tools.sql_database.tool import (
@@ -15,6 +15,7 @@ class SQLToolkit:
         self.engine = create_engine(pg_url, pool_pre_ping=True)
         self.last_query_text = None
         self.last_error_text = None
+        self.current_trace = None
 
         # Load schema whitelist
         with open(whitelist_path, "r") as f:
@@ -32,6 +33,10 @@ class SQLToolkit:
         # Track SQL query errors for retry limit
         self.error_count = 0
         self.max_attempts = 4
+
+    def set_trace(self, trace):
+        """Attach per-request trace context."""
+        self.current_trace = trace
     
     def get_tools_with_retry_limit(self, max_attempts: int = 4):
         """Return list of SQL tools with retry limit for query errors"""
@@ -42,7 +47,17 @@ class SQLToolkit:
         
         # List tables tool (from whitelist)
         def list_tables_impl(_: str = "") -> str:
-            return ", ".join(self.table_keys)
+            started = time.perf_counter()
+            if self.current_trace:
+                self.current_trace.record_tool_start(name="sql_db_list_tables", tool_input="")
+            result = ", ".join(self.table_keys)
+            if self.current_trace:
+                self.current_trace.record_tool_end(
+                    tool_output=result,
+                    success=True,
+                    latency_ms=round((time.perf_counter() - started) * 1000, 2),
+                )
+            return result
 
         list_tables_tool = Tool(
             name="sql_db_list_tables",
@@ -52,10 +67,20 @@ class SQLToolkit:
 
         # Get schema tool (from whitelist)
         def schema_info_impl(_: str = "") -> str:
+            started = time.perf_counter()
+            if self.current_trace:
+                self.current_trace.record_tool_start(name="sql_db_schema", tool_input="")
             parts = []
             for tbl, cols in self.schema.get("tables", {}).items():
                 parts.append(f"Table: {tbl}\nColumns: {', '.join(cols)}")
-            return "\n\n".join(parts)
+            result = "\n\n".join(parts)
+            if self.current_trace:
+                self.current_trace.record_tool_end(
+                    tool_output=result,
+                    success=True,
+                    latency_ms=round((time.perf_counter() - started) * 1000, 2),
+                )
+            return result
 
         get_schema_tool = Tool(
             name="sql_db_schema",
@@ -68,10 +93,23 @@ class SQLToolkit:
         # Query tool with safety wrapper and retry limit
         def safe_query_with_retry_limit(query: str) -> str:
             """Execute SQL query with safety checks and retry limit"""
+            started = time.perf_counter()
+            if self.current_trace:
+                self.current_trace.record_tool_start(name="sql_db_query", tool_input=query)
+                self.current_trace.record_sql(query)
+
             # Safety check - block non-SELECT queries
             lower = query.lower().strip()
             if any(x in lower for x in ["insert", "update", "delete", "drop", "alter", "create", "truncate"]):
-                return "Error: Only SELECT queries are allowed."
+                msg = "Error: Only SELECT queries are allowed."
+                if self.current_trace:
+                    self.current_trace.record_tool_end(
+                        tool_output=msg,
+                        success=False,
+                        latency_ms=round((time.perf_counter() - started) * 1000, 2),
+                        error=msg,
+                    )
+                return msg
             
             # Check if we are querying fact_scores. If so, check if there is a filter on every dimension.
             error_msg = "Error: You must filter on every dimension. "
@@ -90,15 +128,30 @@ class SQLToolkit:
                     error_msg += "You did not filter on test_id. "
 
             if error_msg != "Error: You must filter on every dimension. ":
+                if self.current_trace:
+                    self.current_trace.record_tool_end(
+                        tool_output=error_msg,
+                        success=False,
+                        latency_ms=round((time.perf_counter() - started) * 1000, 2),
+                        error=error_msg,
+                    )
                 return error_msg
             
             # Check if we've exceeded retry limit
             if self.error_count >= self.max_attempts:
-                return (
+                msg = (
                     f"Error: Maximum query attempts ({self.max_attempts}) exceeded. "
                     "I've tried multiple times but cannot generate a working query. "
                     "Please try rephrasing your question or ask something else."
                 )
+                if self.current_trace:
+                    self.current_trace.record_tool_end(
+                        tool_output=msg,
+                        success=False,
+                        latency_ms=round((time.perf_counter() - started) * 1000, 2),
+                        error=msg,
+                    )
+                return msg
             
             try:
                 self.last_query_text = query
@@ -107,6 +160,12 @@ class SQLToolkit:
                 self.error_count = 0
                 self.last_query_succeeded = True
                 self.last_error_text = None
+                if self.current_trace:
+                    self.current_trace.record_tool_end(
+                        tool_output=result,
+                        success=True,
+                        latency_ms=round((time.perf_counter() - started) * 1000, 2),
+                    )
                 return result
             except Exception as e:
                 # Increment error count
@@ -121,7 +180,13 @@ class SQLToolkit:
                         "\n\nMaximum retry attempts reached. Please try rephrasing your question "
                         "or provide more specific details about what you're looking for."
                     )
-                
+                if self.current_trace:
+                    self.current_trace.record_tool_end(
+                        tool_output=error_msg,
+                        success=False,
+                        latency_ms=round((time.perf_counter() - started) * 1000, 2),
+                        error=str(e),
+                    )
                 return error_msg
         
         query_tool = Tool(

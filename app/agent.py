@@ -8,9 +8,9 @@ from langgraph.graph.message import add_messages
 from langgraph.prebuilt import create_react_agent
 
 import json, os
-from .prompts import REACT_SYSTEM_PROMPT
 from .tools_sql import SQLToolkit
 from .tools_entity import EntityResolver
+from .tracing import AgentTraceLogger
 
 from .prompts import REACT_SYSTEM_PROMPT, REACT_SYSTEM_CHARTS_PROMPT
 
@@ -33,6 +33,7 @@ def create_sql_agent(pg_url: str, whitelist_path: str, charts_enabled: bool = Tr
     # Initialize components
     sql_toolkit = SQLToolkit(pg_url, whitelist_path)
     entity_resolver = EntityResolver()
+    trace_logger = AgentTraceLogger()
     
     # Get tools with error tracking
     tools = sql_toolkit.get_tools_with_retry_limit(max_attempts=4)
@@ -93,10 +94,18 @@ def create_sql_agent(pg_url: str, whitelist_path: str, charts_enabled: bool = Tr
         state_modifier=combined_system_instructions,
     )
     
-    return agent, sql_toolkit, combined_system_instructions
+    return agent, sql_toolkit, entity_resolver, trace_logger, combined_system_instructions
 
 
-def run_agent_query(agent, question: str, history: list = None):
+def run_agent_query(
+    agent,
+    question: str,
+    history: list = None,
+    sql_toolkit: SQLToolkit = None,
+    entity_resolver: EntityResolver = None,
+    trace_logger: AgentTraceLogger = None,
+    session_id: str = None,
+):
     """
     Run a query through the agent
     
@@ -120,14 +129,30 @@ def run_agent_query(agent, question: str, history: list = None):
     # Add current question
     messages.append(HumanMessage(content=question))
     
-    # Run agent
-    result = agent.invoke({"messages": messages})
+    trace = trace_logger.start_request(question=question, session_id=session_id) if trace_logger else None
+    if sql_toolkit and trace:
+        sql_toolkit.set_trace(trace)
+    if entity_resolver and trace:
+        entity_resolver.set_trace(trace)
+
+    invoke_kwargs = {"messages": messages}
+    if trace:
+        result = agent.invoke(invoke_kwargs, config={"callbacks": [trace.callback_handler]})
+    else:
+        result = agent.invoke(invoke_kwargs)
     
     # Extract final response
     final_message = result["messages"][-1]
     response = final_message.content if hasattr(final_message, 'content') else str(final_message)
     
-    return {
+    response_payload = {
         "response": response,
         "messages": result["messages"]
     }
+    if trace and trace_logger:
+        trace_payload = trace.finalize(answer=response)
+        trace_logger.write(trace_payload)
+        response_payload["trace_id"] = trace.trace_id
+        response_payload["trace"] = trace_payload
+
+    return response_payload

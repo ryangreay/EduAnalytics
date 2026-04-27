@@ -39,15 +39,15 @@ if "charts_enabled" not in st.session_state:
 # Initialize agent
 @st.cache_resource
 def get_agent(_charts_enabled=True):
-    agent, sql_toolkit, system_instructions = create_sql_agent(
+    agent, sql_toolkit, entity_resolver, trace_logger, system_instructions = create_sql_agent(
         pg_url=PG_URL,
         whitelist_path=str(PROJECT_ROOT / "app" / "schema_whitelist.json"),
         charts_enabled=_charts_enabled
     )
-    return agent, sql_toolkit, system_instructions
+    return agent, sql_toolkit, entity_resolver, trace_logger, system_instructions
 
 try:
-    agent, sql_toolkit, system_instructions = get_agent(_charts_enabled=st.session_state.charts_enabled)
+    agent, sql_toolkit, entity_resolver, trace_logger, system_instructions = get_agent(_charts_enabled=st.session_state.charts_enabled)
 except Exception as e:
     st.error(f"Failed to initialize agent: {e}")
     st.stop()
@@ -299,9 +299,16 @@ if prompt := st.chat_input("Ask about Math/ELA (e.g., 'Show top districts by Mat
     # Show thinking indicator
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
+            trace = None
             try:
                 # Reset error count for new question
                 sql_toolkit.reset_error_count()
+                trace = trace_logger.start_request(
+                    question=prompt,
+                    session_id=st.session_state.get("session_id", "streamlit"),
+                )
+                sql_toolkit.set_trace(trace)
+                entity_resolver.set_trace(trace)
                 
                 # Convert history to LangChain messages
                 messages = []
@@ -319,7 +326,11 @@ if prompt := st.chat_input("Ask about Math/ELA (e.g., 'Show top districts by Mat
                 
                 # Run agent with streaming and full history
                 full_response = ""
-                for step in agent.stream({"messages": messages},stream_mode="values"):
+                for step in agent.stream(
+                    {"messages": messages},
+                    stream_mode="values",
+                    config={"callbacks": [trace.callback_handler]},
+                ):
                     last_message = step["messages"][-1]
                     
                     # If it's an AI message with content, show it
@@ -359,11 +370,18 @@ if prompt := st.chat_input("Ask about Math/ELA (e.g., 'Show top districts by Mat
 
                 # Add assistant response to history
                 st.session_state.messages.append({"role": "assistant", "content": full_response})
+                trace_payload = trace.finalize(answer=full_response)
+                trace_logger.write(trace_payload)
                 
             except Exception as e:
                 error_msg = f"An error occurred: {str(e)}"
                 st.error(error_msg)
                 st.session_state.messages.append({"role": "assistant", "content": error_msg})
+                try:
+                    trace_payload = trace.finalize(answer=error_msg, extra={"request_failed": True})
+                    trace_logger.write(trace_payload)
+                except Exception:
+                    pass
 
 # Sidebar with examples and info
 with st.sidebar:

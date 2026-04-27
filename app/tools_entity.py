@@ -1,4 +1,5 @@
 import os
+import time
 from langchain_openai import OpenAIEmbeddings
 from langchain_pinecone import PineconeVectorStore
 from pinecone import Pinecone
@@ -19,6 +20,7 @@ class EntityResolver:
                 pinecone_key = None
         
         self.enabled = pinecone_key is not None
+        self.current_trace = None
         
         if self.enabled:
             index_name = os.getenv("PINECONE_INDEX_NAME", "eduanalytics-entities")
@@ -27,6 +29,9 @@ class EntityResolver:
                 index_name=index_name, 
                 embedding=self.embeddings
             )
+
+    def set_trace(self, trace):
+        self.current_trace = trace
     
     def search(self, text: str, k=5):
         """Search for similar entities"""
@@ -38,13 +43,32 @@ class EntityResolver:
     
     def search_as_text(self, text: str, k=5) -> str:
         """Search and format results as text for the agent"""
+        started = time.perf_counter()
+        if self.current_trace:
+            self.current_trace.record_tool_start(name="search_proper_nouns", tool_input=text)
+
         if not self.enabled:
-            return "Entity search is not available."
+            msg = "Entity search is not available."
+            if self.current_trace:
+                self.current_trace.record_tool_end(
+                    tool_output=msg,
+                    success=False,
+                    latency_ms=round((time.perf_counter() - started) * 1000, 2),
+                    error=msg,
+                )
+            return msg
         
         results = self.vector_store.similarity_search(text, k=k)
         
         if not results:
-            return "No matching entities found."
+            msg = "No matching entities found."
+            if self.current_trace:
+                self.current_trace.record_tool_end(
+                    tool_output=msg,
+                    success=True,
+                    latency_ms=round((time.perf_counter() - started) * 1000, 2),
+                )
+            return msg
         
         output_lines = []
         for i, doc in enumerate(results, 1):
@@ -61,7 +85,14 @@ class EntityResolver:
             elif entity_type == "grade":
                 output_lines.append(f"{i}. Grade {meta.get('grade', '')}")
         
-        return "\n".join(output_lines)
+        output = "\n".join(output_lines)
+        if self.current_trace:
+            self.current_trace.record_tool_end(
+                tool_output=output,
+                success=True,
+                latency_ms=round((time.perf_counter() - started) * 1000, 2),
+            )
+        return output
     
     def as_tool(self) -> Tool:
         """Create a LangChain Tool for the agent"""
